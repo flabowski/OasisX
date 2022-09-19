@@ -1,0 +1,14 @@
+digraph "packages" {
+charset="utf-8"
+rankdir=BT
+"0" [label="__init__", shape="box"];
+"1" [label="cylinder", shape="box"];
+"2" [label="domain", shape="box"];
+"3" [label="freezing_cavity", shape="box"];
+"4" [label="io", shape="box"];
+"5" [label="ipcs_abcn", shape="box"];
+"6" [label="logging", shape="box"];
+"7" [label="main", shape="box"];
+"8" [label="segregated_domain", shape="box"];
+"9" [label="utilities", shape="box"];
+}
