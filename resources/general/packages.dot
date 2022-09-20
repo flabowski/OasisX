@@ -1,0 +1,30 @@
+digraph "packages" {
+charset="utf-8"
+rankdir=BT
+"0" [label="__init__", shape="box"];
+"1" [label="oasisx", shape="box"];
+"2" [label="oasisx.cylinder", shape="box"];
+"3" [label="oasisx.domain", shape="box"];
+"4" [label="oasisx.fractional_step", shape="box"];
+"5" [label="oasisx.freezing_cavity", shape="box"];
+"6" [label="oasisx.io", shape="box"];
+"7" [label="oasisx.ipcs_abcn", shape="box"];
+"8" [label="oasisx.logging", shape="box"];
+"9" [label="oasisx.segregated_domain", shape="box"];
+"10" [label="oasisx.utilities", shape="box"];
+"2" -> "4" [arrowhead="open", arrowtail="none"];
+"2" -> "6" [arrowhead="open", arrowtail="none"];
+"2" -> "9" [arrowhead="open", arrowtail="none"];
+"3" -> "8" [arrowhead="open", arrowtail="none"];
+"4" -> "7" [arrowhead="open", arrowtail="none"];
+"4" -> "8" [arrowhead="open", arrowtail="none"];
+"4" -> "10" [arrowhead="open", arrowtail="none"];
+"5" -> "4" [arrowhead="open", arrowtail="none"];
+"5" -> "6" [arrowhead="open", arrowtail="none"];
+"5" -> "9" [arrowhead="open", arrowtail="none"];
+"6" -> "8" [arrowhead="open", arrowtail="none"];
+"7" -> "10" [arrowhead="open", arrowtail="none"];
+"9" -> "3" [arrowhead="open", arrowtail="none"];
+"9" -> "8" [arrowhead="open", arrowtail="none"];
+"10" -> "8" [arrowhead="open", arrowtail="none"];
+}

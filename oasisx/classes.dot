@@ -1,0 +1,29 @@
+digraph "classes" {
+charset="utf-8"
+rankdir=BT
+"0" [label="{AssignedVectorFunction|fa\lu\l|}", shape="record"];
+"1" [label="{CG1Function|A\lbf_dg\lbounded : bool\ldg\l|bound()\l}", shape="record"];
+"2" [label="{Cylinder|C_D : ndarray\lC_L : ndarray\lH : float\lNS_expressions : dict\lRe\lSchmidt : dict\lSchmidt_T : dict\lT : int\lUmax\lUmean\lbc_dict : dict\lbcs : dict\lcheckpoint : int\lcoeff\lds_\ldt : float\linlet\lmesh\lmf\lmu : float\lnu\lpdiff : ndarray\lpkg_dir\lplot_interval : int\lprint_intermediate_info : int\lrho : float\lsave_step : int\lscalar_components : list\lsimulation_start\lt_p : ndarray\lt_u : ndarray\ltemp_dir : str\ludiff : ndarray\luse_krylov_solvers : bool\lvelocity_degree : int\l|create_bcs()\lget_Umax()\lmesh_from_file(mesh_name, facet_name)\lnormal_stresses()\lplot()\lplot_decay()\lstart_timestep_hook(t)\ltemporal_hook(t, tstep, ps)\ltheend_hook(SVD)\lupdate_bcs(t)\l}", shape="record"];
+"3" [label="{DivFunction|WGM : list\lmatvec\l|assemble_rhs()\l}", shape="record"];
+"4" [label="{Domain|\l|body_force()\lcreate_bcs()\lget_problem_parameters()\linitialize()\lpre_solve_hook()\lrecommend_dt()\lscalar_hook()\lscalar_source()\lset_parameters(kwargs)\lshow_info(t, tstep, toc)\ltheend_hook()\l}", shape="record"];
+"5" [label="{FirstInner|A\lK\lKT : tuple, NoneType\lLT : NoneType\lM\lNT : NoneType\la_conv\la_scalar\ldomain\lu_ab\l|assemble()\l}", shape="record"];
+"6" [label="{FreezingCavity|D\lNS_expressions : dict\lSchmidt : dict\lSchmidt_T : dict\lT : int\lbc_dict : dict\lbcs : dict\lcheckpoint : int\lds_\ldt\lg\lk_btm\lk_lft\lk_rgt\lk_top\lmesh\lmf\lmu\lno_slip\lnu\lpdiff : ndarray\lpkg_dir\lplot_interval : int\lprint_intermediate_info : int\lrho\lsave_step : int\lscalar_components : list\lsimulation_start\lt_\lt_1\lt_amb\lt_feeder\lt_init\lt_p : ndarray\lt_u : ndarray\ltemp_dir : str\ltopflow\ludiff : ndarray\luse_krylov_solvers : bool\lvelocity_degree : int\l|advance()\lcreate_bcs()\lget_mu()\lget_nu()\lget_rho()\lget_t()\linitialize_components()\lmesh_from_file(mesh_name, facet_name)\lmu_(T)\lplot()\lplot_decay()\lrho_(T)\lset_mu(mu)\lset_nu(nu)\lset_rho(rho)\lset_t(t)\lstart_timestep_hook(t)\lstokes()\ltemporal_hook(t, tstep, ps)\ltheend_hook(SVD)\lupdate_nu()\l}", shape="record"];
+"7" [label="{GradFunction|WGM\lbf\li : int\lmatvec : list\l|assemble_rhs(u)\l}", shape="record"];
+"8" [label="{LESsource|bf\l|assemble_rhs(i)\l}", shape="record"];
+"9" [label="{Mat_cache_dict|\l|}", shape="record"];
+"10" [label="{NNsource|bf\l|assemble_rhs(i)\l}", shape="record"];
+"11" [label="{OasisFunction|A\lML\lbcs : list\lbf\lform\lmatvec : list\lmethod : str\lrhs\lsol\ltest\ltrial\l|assemble_rhs()\l}", shape="record"];
+"12" [label="{OasisMemoryUsage|memory : int\lmemory_vm : int\lprev : int\lprev_vm : int\l|}", shape="record"];
+"13" [label="{OasisTimer|\l|}", shape="record"];
+"14" [label="{PETScKrylovSolverParameters|\l|}", shape="record"];
+"15" [label="{PressureStep|Ap\ldivu\ldomain\lp_sol\l|assemble()\lsolve()\l}", shape="record"];
+"16" [label="{ScalarSolver|Ta\lTb\lbb\lbx\ldomain\l|assemble()\lsolve(ci)\l}", shape="record"];
+"17" [label="{Scheme|\l|}", shape="record"];
+"18" [label="{SegregatedDomain|AB_projection_pressure : bool\lDynamicSmagorinsky : dict\lKineticEnergySGS : dict\lModifiedCross : dict\lSmagorinsky : dict\lT : float\lU_AB\lVV : dict\lWale : dict\lb : dict\lb0 : dict\lb_tmp : dict\lcheckpoint : int\lconstrained_domain : NoneType\ldp_\lf\lfolder : str\lfs\liters_on_first_timestep : int\lkilltime : NoneType\lkrylov_solvers : dict\lles_model : str\lnn_model : str\lnu_nn_krylov_solver : dict\lnut_krylov_solver : dict\loutput_timeseries_as_vector : bool\lp\lplot_interval : int\lpressure_degree : int\lpressure_krylov_solver : dict\lprint_intermediate_info : int\lprint_velocity_pressure_convergence : bool\lq\lq_ : dict\lq_1 : dict\lq_2 : dict\lrestart_folder : NoneType\lsave_step : int\lscalar_krylov_solver : dict\lsolver : IPCS_ABCN\lsys_comp\ltesting : bool\lu\lu_\lu_1\lu_2\lu_components : list\luc_comp\luse_krylov_solvers : bool\lv\lvelocity_degree : int\lvelocity_krylov_solver : dict\lvelocity_update_solver : dict\l|advance()\lapply_bcs()\ldeclare_components()\linitialize_components()\llist_problem_components()\lpressure_hook()\lprint_velocity_pressure_info(num_iter, inner_iter, udiff)\lstart_timestep_hook()\ltemporal_hook()\lvelocity_tentative_hook()\l}", shape="record"];
+"19" [label="{Solver|\l|}", shape="record"];
+"20" [label="{Solver_cache_dict|\l|}", shape="record"];
+"21" [label="{TentativeVelocityStep|domain\lgradp : dict\lu_sol\l|assemble(ui)\lsolve(ui, udiff)\lvelocity_update(ui)\l}", shape="record"];
+"1" -> "11" [arrowhead="empty", arrowtail="none"];
+"3" -> "11" [arrowhead="empty", arrowtail="none"];
+"7" -> "11" [arrowhead="empty", arrowtail="none"];
+}
