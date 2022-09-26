@@ -352,8 +352,9 @@ class ScalarSolver:
 
         # Compute rhs for all scalars
         for ci in dmn.scalar_components:
+            # Ta = M/dt + .5 a_conv 
             # Add diffusion
-            Ta.axpy(-0.5 / dmn.Schmidt[ci], K, True)
+            Ta.axpy(-0.5 * dmn.D[ci], K, True)  # Ta =  M/dt - .5 a_conv -0.5*D*K
             if dmn.les_model != "NoModel":
                 Ta.axpy(-0.5 / dmn.Schmidt_T[ci], KT[0], True)
             if dmn.nn_model != "NoModel":
@@ -362,27 +363,28 @@ class ScalarSolver:
             # Compute rhs
             dmn.b[ci].zero()
             dmn.b[ci].axpy(1.0, Ta * dmn.q_1[ci].vector())
-            dmn.b[ci].axpy(1.0, dmn.b0[ci])
+            dmn.b[ci].axpy(1.0, dmn.b0[ci])  # body forces
 
             # Subtract diffusion
-            Ta.axpy(0.5 / dmn.Schmidt[ci], K, True)
+            Ta.axpy(0.5 * dmn.D[ci], K, True)  # Ta = M/dt - .5 a_conv
             if dmn.les_model != "NoModel":
                 Ta.axpy(0.5 / dmn.Schmidt_T[ci], KT[0], True)
             if dmn.nn_model != "NoModel":
                 Ta.axpy(0.5 / dmn.Schmidt_T[ci], KT[0], True)
 
-        # Reset matrix for lhs - Note scalar matrix does not contain diffusion
-        Ta *= -1.0
-        Ta.axpy(2.0 / dmn.dt, M, True)
+        # Reset matrix for lhs - Note scalar matrix does not contain diffusion, 
+        # because it differs for each component
+        Ta *= -1.0  # Ta = -M/dt + .5 a_conv
+        Ta.axpy(2.0 / dmn.dt, M, True) # Ta = M/dt + .5 a_conv
         return
 
     def solve(self, ci):
         """Solve scalar equation."""
         dmn = self.domain
         K = dmn.K  # stiffness matrix from FirstInnerIter
+        Ta.axpy(0.5 * dmn.D[ci], K, True)  # Ta = M/dt + .5 a_conv + 0.5*D*K
         Ta = dmn.Ta
-        Ta.axpy(0.5 / dmn.Schmidt[ci], K, True)  # Add diffusion
-        if len(dmn.scalar_components) > 1:
+        if len(dmn.scalar_components[ci]) > 1:
             # Reuse solver for all scalars.
             # This requires the same matrix and vectors to be used by c_sol.
             Tb = self.Tb
@@ -403,7 +405,9 @@ class ScalarSolver:
         else:
             [bc.apply(Ta, dmn.b[ci]) for bc in dmn.bcs[ci]]
             self.c_sol.solve(Ta, dmn.q_[ci].vector(), dmn.b[ci])
-        Ta.axpy(-0.5 / dmn.Schmidt[ci], K, True)  # Subtract diffusion
+
+        if len(dmn.scalar_components) > 1:
+            Ta.axpy(-0.5 * dmn.D[ci], K, True)  # Subtract diffusion
         # x_[ci][x_[ci] < 0] = 0.               # Bounded solution
         # x_[ci].set_local(maximum(0., x_[ci].array()))
         # x_[ci].apply("insert")

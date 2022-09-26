@@ -73,7 +73,7 @@ class FractionalStep:
         fit = solver.FirstInner(self.domain)
         tvs = solver.TentativeVelocityStep(self.domain)
         prs = solver.PressureStep(self.domain)
-        if len(self.domain.scalar_components) > 0:
+        for ci in self.domain.scalar_components:
             scs = solver.ScalarSolver(self.domain)
         stop = False
         t = 0.0
@@ -178,7 +178,7 @@ class FractionalStep:
                 t3 = OasisTimer("Solving scalar {}".format(ci))  # print_solve_info
                 scs.assemble()
                 for ci in self.domain.scalar_components:
-                    scs.solve()
+                    scs.solve(ci)
                     self.domain.scalar_hook()
                 t3.stop()
 
