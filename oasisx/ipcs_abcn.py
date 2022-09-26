@@ -37,6 +37,8 @@ class FirstInner:
         M = ut.assemble_matrix(inner(u, v) * dx)
         # Stiffness matrix (without viscosity coefficient)
         K = ut.assemble_matrix(inner(grad(u), grad(v)) * dx)
+        if isinstance(dmn.nu, Function):
+            dmn.K_scaled = K.copy()
         # Allocate stiffness matrix for LES that changes with time
         KT = (
             None
@@ -62,12 +64,13 @@ class FirstInner:
             if dmn.nn_model == "NoModel"
             else ut.NNsource(dmn.nunn_, u_ab, dmn.VV["u0"], name="NTd")
         )
-        # for first iter:
+        # for the scalar solver and the first iter
+        dmn.K = K
+        dmn.M = M
+        # for first iter only:
         self.A = A
         self.a_conv = a_conv
-        self.M = M
         self.a_scalar = a_scalar
-        self.K = K
         self.LT = LT
         self.KT = KT
         self.NT = NT
@@ -81,10 +84,10 @@ class FirstInner:
         reset coefficient matrix for solve.
         """
         dmn = self.domain
+        K = dmn.K
+        M = dmn.M
         A = self.A
         a_conv = self.a_conv
-        M = self.M
-        K = self.K
         LT = self.LT
         KT = self.KT
         NT = self.NT
@@ -103,10 +106,20 @@ class FirstInner:
         A *= -0.5  # Negative convection on the rhs
         A.axpy(1.0 / dmn.dt, M, True)  # Add mass
         # Set up scalar matrix for rhs using the same convection as velocity
-        # ... we want to do that in the ScalarSolver.assemble() instead
+        if len(dmn.scalar_components) > 0:
+            Ta = dmn.Ta  # = 1/dt * M + u_ab
+            Ta.zero()
+            Ta.axpy(1., A, True)
 
         # Add diffusion and compute rhs for all velocity components
-        A.axpy(-0.5 * dmn.nu, K, True)  # TODO
+        if isinstance(dmn.nu, Function):
+            K_scaled = dmn.K_scaled
+            K_scaled.zero()
+            K_scaled.axpy(1., K, True)
+            K_scaled.instance().mat().diagonalScale(dmn.nu.vector().vec())
+            A.axpy(-0.5, K_scaled, True)
+        else:
+            A.axpy(-0.5*dmn.nu, K, True)
         if dmn.les_model != "NoModel":
             assemble(dmn.nut_ * KT[1] * dx, tensor=KT[0])
             A.axpy(-0.5, KT[0], True)
@@ -250,6 +263,9 @@ class PressureStep:
         self.divu.assemble_rhs()  # Computes div(u_)*q*dx
         dmn.b["p"][:] = self.divu.rhs
         dmn.b["p"] *= -1.0 / dmn.dt
+        # print(dmn.mesh.num_vertices())  # s
+        # print(self.Ap.instance().mat().getSize())
+        # print(dmn.q_["u0"].vector().vec().getSize())
         dmn.b["p"].axpy(1.0, self.Ap * dmn.q_["p"].vector())
         # print("divu", (self.divu.rhs.get_local() ** 2).sum() ** 0.5)
         return
@@ -286,74 +302,58 @@ class PressureStep:
 
 class ScalarSolver:
     def __init__(self, domain):
-        # TODO: M from first inner
-        M = self.M  # from FirstInnerIter
         dmn = self.domain = domain
+        M = dmn.M  # from FirstInnerIter
         # ... get_solvers:
         if dmn.use_krylov_solvers:
             # scalar solver ##
-            if len(dmn.scalar_components) > 0:
-                c_prec = PETScPreconditioner(
-                    dmn.scalar_krylov_solver["preconditioner_type"]
-                )
-                c_sol = PETScKrylovSolver(
-                    dmn.scalar_krylov_solver["solver_type"], c_prec
-                )
-                c_sol.parameters.update(dmn.krylov_solvers)
-            else:
-                c_sol = None
+            c_prec = PETScPreconditioner(
+                dmn.scalar_krylov_solver["preconditioner_type"]
+            )
+            c_sol = PETScKrylovSolver(
+                dmn.scalar_krylov_solver["solver_type"], c_prec
+            )
+            c_sol.parameters.update(dmn.krylov_solvers)
         else:
-            if len(dmn.scalar_components) > 0:
-                c_sol = LUSolver()
-            else:
-                c_sol = None
+            c_sol = LUSolver()
 
         # ... setup:
         # Allocate coefficient matrix and work vectors for scalars.
         # Matrix differs from velocity in boundary conditions only
-        if len(dmn.scalar_components) > 0:
-            self.Ta = Matrix(M)
-            if len(dmn.scalar_components) > 1:
-                # For more than one scalar we use the same linear algebra
-                # solver for all.
-                # For this to work we need some additional tensors.
-                # The extra matrix is required since different scalars may have
-                # different boundary conditions
-                Tb = Matrix(M)
-                sc0 = dmn.scalar_components[0]
-                bb = Vector(dmn.q_[sc0].vector())
-                bx = Vector(dmn.q_[sc0].vector())
-                self.Tb = Tb
-                self.bb = bb
-                self.bx = bx
+        dmn.Ta = Matrix(M)
+        if len(dmn.scalar_components) > 1:
+            # For more than one scalar we use the same linear algebra
+            # solver for all.
+            # For this to work we need some additional tensors.
+            # The extra matrix is required since different scalars may have
+            # different boundary conditions
+            Tb = Matrix(M)
+            sc0 = dmn.scalar_components[0]
+            bb = Vector(dmn.q_[sc0].vector())
+            bx = Vector(dmn.q_[sc0].vector())
+            self.Tb = Tb
+            self.bb = bb
+            self.bx = bx
 
     def assemble(self):
         """Assemble scalar equation."""
         dmn = self.domain
-        M = self.M  # mass matrix from FirstInnerIter
-        K = self.K  # stiffness matrix from FirstInnerIter
+        M = dmn.M  # mass matrix from FirstInnerIter
+        K = dmn.K  # stiffness matrix from FirstInnerIter
+        Ta = dmn.Ta  # intermediate A from FirstInnerIter
         KT = self.KT  # time dep. stiffness mat for LES from FirstInnerIter
 
-        # # # # - - - assemble_first_inner_iter - - - # # #
-        # Set up scalar matrix for rhs using the same convection as velocity
-        if len(dmn.scalar_components) > 0:
-            Ta = self.Ta
-            if self.a_scalar is self.a_conv:
-                # TODO:
-                Ta.zero()
-                Ta.axpy(1.0, self.A, True)
-
         # # # # - - - scalar_assemble - - - # # #
-        # Just in case you want to use a different scalar convection
-        if self.a_scalar is not self.a_conv:
-            assemble(self.a_scalar, tensor=Ta)
-            Ta *= -0.5  # Negative convection on the rhs
-            Ta.axpy(1.0 / dmn.dt, M, True)  # Add mass
+        # # Just in case you want to use a different scalar convection. We will implement that when its actually needed
+        # if self.a_scalar is not self.a_conv:
+        #     assemble(self.a_scalar, tensor=Ta)
+        #     Ta *= -0.5  # Negative convection on the rhs
+        #     Ta.axpy(1.0 / dmn.dt, M, True)  # Add mass
 
         # Compute rhs for all scalars
         for ci in dmn.scalar_components:
             # Add diffusion
-            Ta.axpy(-0.5 * dmn.nu / dmn.Schmidt[ci], K, True)
+            Ta.axpy(-0.5 / dmn.Schmidt[ci], K, True)
             if dmn.les_model != "NoModel":
                 Ta.axpy(-0.5 / dmn.Schmidt_T[ci], KT[0], True)
             if dmn.nn_model != "NoModel":
@@ -365,7 +365,7 @@ class ScalarSolver:
             dmn.b[ci].axpy(1.0, dmn.b0[ci])
 
             # Subtract diffusion
-            Ta.axpy(0.5 * dmn.nu / dmn.Schmidt[ci], K, True)
+            Ta.axpy(0.5 / dmn.Schmidt[ci], K, True)
             if dmn.les_model != "NoModel":
                 Ta.axpy(0.5 / dmn.Schmidt_T[ci], KT[0], True)
             if dmn.nn_model != "NoModel":
@@ -379,9 +379,9 @@ class ScalarSolver:
     def solve(self, ci):
         """Solve scalar equation."""
         dmn = self.domain
-        K = self.K  # stiffness matrix from FirstInnerIter
-        Ta = self.Ta
-        Ta.axpy(0.5 * dmn.nu / dmn.Schmidt[ci], K, True)  # Add diffusion
+        K = dmn.K  # stiffness matrix from FirstInnerIter
+        Ta = dmn.Ta
+        Ta.axpy(0.5 / dmn.Schmidt[ci], K, True)  # Add diffusion
         if len(dmn.scalar_components) > 1:
             # Reuse solver for all scalars.
             # This requires the same matrix and vectors to be used by c_sol.
@@ -403,7 +403,7 @@ class ScalarSolver:
         else:
             [bc.apply(Ta, dmn.b[ci]) for bc in dmn.bcs[ci]]
             self.c_sol.solve(Ta, dmn.q_[ci].vector(), dmn.b[ci])
-        Ta.axpy(-0.5 * dmn.nu / dmn.Schmidt[ci], K, True)  # Subtract diffusion
+        Ta.axpy(-0.5 / dmn.Schmidt[ci], K, True)  # Subtract diffusion
         # x_[ci][x_[ci] < 0] = 0.               # Bounded solution
         # x_[ci].set_local(maximum(0., x_[ci].array()))
         # x_[ci].apply("insert")

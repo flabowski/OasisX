@@ -28,7 +28,6 @@ class FractionalStep:
         domain.list_problem_components()
         domain.declare_components()
         domain.initialize_components()
-
         domain.create_bcs()
         # TODO: Read in previous solution if restarting
         # TODO: LES setup
@@ -73,7 +72,9 @@ class FractionalStep:
 
         fit = solver.FirstInner(self.domain)
         tvs = solver.TentativeVelocityStep(self.domain)
-        ps = solver.PressureStep(self.domain)
+        prs = solver.PressureStep(self.domain)
+        if len(self.domain.scalar_components) > 0:
+            scs = solver.ScalarSolver(self.domain)
         stop = False
         t = 0.0
         tstep = 0
@@ -120,16 +121,16 @@ class FractionalStep:
                 for i, ui in enumerate(self.domain.u_components):
                     t1 = OasisTimer("Solving tentative velocity " + ui, print_info)
                     tvs.assemble(ui=ui)  # uses p_ to compute gradp
-                    self.domain.velocity_tentative_hook(ui=ui)
                     udiff = tvs.solve(ui=ui, udiff=udiff)
+                    self.domain.velocity_tentative_hook(ui=ui)
                     t1.stop()
                 t0.stop()
 
                 t2 = OasisTimer("Pressure solve", print_info)
                 # if tstep % pressure_step == 0 or tstep <= 10:
-                ps.assemble()
+                prs.assemble()
+                pdiff = prs.solve()
                 self.domain.pressure_hook()
-                pdiff = ps.solve()
                 t2.stop()
                 # discard the extra inner iterations of the first 10 outer itartions
                 if inner_iter < max_iter:
@@ -172,16 +173,17 @@ class FractionalStep:
                 tvs.velocity_update(ui=ui)
             t3.stop()
 
-            # TODO: Solve for scalars
-            # if len(scalar_components) > 0:
-            #     solver.scalar_assemble()
-            #     for ci in scalar_components:
-            #         t1 = OasisTimer("Solving scalar {}".format(ci), print_solve_info)
-            #         pblm.scalar_hook()
-            #         solver.scalar_solve()
-            #         t1.stop()
+            # Scalar solver
+            if len(self.domain.scalar_components) > 0:
+                t3 = OasisTimer("Solving scalar {}".format(ci))  # print_solve_info
+                scs.assemble()
+                for ci in self.domain.scalar_components:
+                    scs.solve()
+                    self.domain.scalar_hook()
+                t3.stop()
+
             t4 = OasisTimer("temporal hook")
-            self.domain.temporal_hook(t=t, tstep=tstep, ps=ps, tvs=tvs)
+            self.domain.temporal_hook(t=t, tstep=tstep, ps=prs, tvs=tvs)
             t4.stop()
 
             # TODO: Save solution if required and check for killoasis file
