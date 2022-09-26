@@ -18,8 +18,8 @@ from dolfin import Expression, DirichletBC, Mesh, XDMFFile, MeshValueCollection
 from dolfin import cpp, grad, ds, inner, dx, div, dot, solve, lhs, rhs, project
 from dolfin import Constant, Function, VectorElement, FiniteElement, plot
 from dolfin import FunctionSpace, TestFunction, TrialFunction, split
-from ROM.snapshot_manager import Data
-from low_rank_model_construction.proper_orthogonal_decomposition import row_svd
+#from ROM.snapshot_manager import Data
+#from low_rank_model_construction.proper_orthogonal_decomposition import row_svd
 import json
 from oasisx.io import parse_command_line
 from fractional_step import FractionalStep
@@ -135,9 +135,9 @@ class FreezingCavity(SegregatedDomain):
             - dot(self.g * self.rho, vu) * dx
         )
         solve(lhs(F) == rhs(F), up_, bcs=bcs)
-        self.q_["u0"] = project(up_.sub(0).sub(0), self.VV["u0"])
-        self.q_["u1"] = project(up_.sub(0).sub(1), self.VV["u1"])
-        self.q_["p"] = project(up_.sub(1), self.VV["u0"])
+        self.q_["u0"].vector().vec().array[:] = project(up_.sub(0).sub(0), self.VV["u0"]).vector().vec().array[:]
+        self.q_["u1"].vector().vec().array[:] = project(up_.sub(0).sub(1), self.VV["u1"]).vector().vec().array[:]
+        self.q_["p"].vector().vec().array[:] = project(up_.sub(1), self.VV["p"]).vector().vec().array[:]
         return
 
     def initialize_components(self):
@@ -283,6 +283,10 @@ class FreezingCavity(SegregatedDomain):
             u = self.q_["u0"].vector().vec().array  # 10942
             v = self.q_["u1"].vector().vec().array
             p = self.q_["p"].vector().vec().array
+            fig, axs = self.plot()
+            plt.savefig(pth + "frame_{:06d}.png".format(i))
+            plt.close()
+
 
         if (i % self.save_step) == 0:
             # u = self.q_["u0"].compute_vertex_values(mesh)  # 2805
@@ -290,7 +294,7 @@ class FreezingCavity(SegregatedDomain):
             v = self.q_["u1"].vector().vec().array
             p = self.q_["p"].vector().vec().array
             t = self.q_["t"].vector().vec().array
-            dpx, dpy = ps.pressure_gradient()
+            #dpx, dpy = ps.pressure_gradient()
             np.save(pth + "u_{:06d}.npy".format(i), u)
             np.save(pth + "v_{:06d}.npy".format(i), v)
             np.save(pth + "p_{:06d}.npy".format(i), p)
@@ -357,18 +361,18 @@ class FreezingCavity(SegregatedDomain):
             print(quantity, X_q.min(), X_q.max(), X_q.mean())
             np.save(pth + "X_" + quantity + ".npy", X_q)
 
-            my_data = Data(X_q, False)
-            X_n = my_data.normalise()
-            if SVD:
-                print("SVD of a ", X_n.shape, "matrix:")
-                c = max(1, X_n.shape[1] // 2000)
-                # U, S, VT = row_svd(X_n, 1, 1, False, False)
-                U, S, VT = row_svd(X_n, c, 1 - 1e-6, True, True)
-                np.save(pth + "ROM_U_" + quantity + ".npy", U)
-                np.save(pth + "ROM_S_" + quantity + ".npy", S)
-                np.save(pth + "ROM_VT_" + quantity + ".npy", VT)
-                np.save(pth + "ROM_X_min_" + quantity + ".npy", my_data.X_min)
-                np.save(pth + "ROM_X_range_" + quantity + ".npy", my_data.X_range)
+            #my_data = Data(X_q, False)
+            #X_n = my_data.normalise()
+            # if SVD:
+            #     print("SVD of a ", X_n.shape, "matrix:")
+            #     c = max(1, X_n.shape[1] // 2000)
+            #     # U, S, VT = row_svd(X_n, 1, 1, False, False)
+            #     U, S, VT = row_svd(X_n, c, 1 - 1e-6, True, True)
+            #     np.save(pth + "ROM_U_" + quantity + ".npy", U)
+            #     np.save(pth + "ROM_S_" + quantity + ".npy", S)
+            #     np.save(pth + "ROM_VT_" + quantity + ".npy", VT)
+            #     np.save(pth + "ROM_X_min_" + quantity + ".npy", my_data.X_min)
+            #     np.save(pth + "ROM_X_range_" + quantity + ".npy", my_data.X_range)
             for i, f in enumerate(onlyfiles):
                 remove(tmp_pth + f)
         # move temp png files to results folder
@@ -441,16 +445,20 @@ class FreezingCavity(SegregatedDomain):
         # pressure = p.compute_vertex_values(mesh)
         # print(x.shape, y.shape, u.shape, v.shape)
         fs = (12, 6)
-        fig, (ax1, ax2, ax3) = plt.subplots(3, sharex=True, sharey=True, figsize=fs)
-        ax1.quiver(x, y, u, v, magnitude)
-        ax2.tricontourf(x, y, tri, p, levels=40)
-        ax3.tricontourf(x, y, tri, t, levels=40)
+        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, sharex=True, sharey=True, figsize=fs)
+        c1 = ax1.quiver(x, y, u, v, magnitude)
+        c2 = ax2.tricontourf(x, y, tri, p, levels=40)
+        c3 = ax3.tricontourf(x, y, tri, t, levels=40)
         ax1.set_aspect("equal")
         ax2.set_aspect("equal")
+        ax3.set_aspect("equal")
         ax1.set_title("velocity")
         ax2.set_title("pressure")
         ax3.set_title("temperature")
-        return fig, (ax1, ax2)
+        # plt.colorbar(c1, ax=ax1)
+        plt.colorbar(c2, ax=ax2)
+        plt.colorbar(c3, ax=ax3)
+        return fig, (ax1, ax2, ax3)
 
 
 if __name__ == "__main__":
@@ -463,7 +471,9 @@ if __name__ == "__main__":
 
     my_domain = FreezingCavity(config)
     my_domain.set_parameters(commandline_args)
+    #my_domain.mesh_name = pkg_dir + "/resources/freezing_cavity/mesh.xdmf"
     my_domain.mesh_from_file()
+    
     algorithm = FractionalStep(my_domain)
     my_domain.plot()
     algorithm.run()
