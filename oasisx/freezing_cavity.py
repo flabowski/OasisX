@@ -17,7 +17,7 @@ from oasisx.segregated_domain import SegregatedDomain
 from dolfin import Expression, DirichletBC, Mesh, XDMFFile, MeshValueCollection
 from dolfin import cpp, grad, ds, inner, dx, div, dot, solve, lhs, rhs, project
 from dolfin import Constant, Function, VectorElement, FiniteElement, plot
-from dolfin import FunctionSpace, TestFunction, TrialFunction, split
+from dolfin import FunctionSpace, TestFunction, TrialFunction, split, assemble
 #from ROM.snapshot_manager import Data
 #from low_rank_model_construction.proper_orthogonal_decomposition import row_svd
 import json
@@ -68,16 +68,16 @@ class FreezingCavity(SegregatedDomain):
         self.bc_dict = {"fluid": 0, "bottom": 1, "right": 2, "top": 3, "left": 4}
         self.t_init = Constant(670)
         self.t_amb = Constant(600)
-        self.t_feeder = Constant(670)
+        # self.t_feeder = Constant(670)
         self.k_top = Constant(0.0)
         self.k_lft = Constant(0.0)
         self.k_btm = Constant(0.0)
         self.k_rgt = Constant(k_r)
         self.g = Constant((0.0, -g))
         self.dt = 1.0
-        self.D = Constant(alpha)
         self.T = 1000
         self.scalar_components = ["t"]
+        self.D = {"t": Constant(alpha)}
 
         self.pkg_dir = dirname(__file__).split("oasis")[0]
         self.simulation_start = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -182,13 +182,26 @@ class FreezingCavity(SegregatedDomain):
 
         lft, rgt = bc_dict["left"], bc_dict["right"]
         top, btm = bc_dict["top"], bc_dict["bottom"]
-        v, ds_, t = self.v, self.ds_, self.q_["t"]
-        self.robin_boundary_terms = (
-            +self.k_lft * (t - self.t_amb) * v * ds_(lft)
-            + self.k_rgt * (t - self.t_amb) * v * ds_(rgt)
-            + self.k_top * (t - self.t_feeder) * v * ds_(top)
-            + self.k_btm * (t - self.t_amb) * v * ds_(btm)
+        v, ds_, t = self.v, self.ds_, self.u  # we use the same trial function as 
+        t1, t_amb = self.q_1["t"], self.t_amb
+        # ... = ... - k (t-t_amb) * v * ds; with t = (t^n+t^{n-1})/2
+        # t^n * (k*v*ds) = - t^{n-1} * (k*v*ds) + t_amb * (k*v*ds)
+        self.bt_lhs = 1.0 * assemble(  # 0.5 for c-n
+            + self.k_lft * t * v * ds_(lft)
+            + self.k_rgt * t * v * ds_(rgt)
+            + self.k_top * t * v * ds_(top)
+            + self.k_btm * t * v * ds_(btm)
         )
+        self.bt_rhs = assemble(
+            + self.k_lft * (-0.0 * t1+t_amb) * v * ds_(lft)  # 0.5 for c-n
+            + self.k_rgt * (-0.0 * t1+t_amb) * v * ds_(rgt)
+            + self.k_top * (-0.0 * t1+t_amb) * v * ds_(top)
+            + self.k_btm * (-0.0 * t1+t_amb) * v * ds_(btm)
+        )
+        # indexptr, indices, data = self.bt_lhs.instance().mat().getValuesCSR()
+        # print(indexptr.shape, indices.shape, data.shape)
+        # print(self.bt_rhs.instance().vec().array.shape)
+
         self.bcs = {
             "u0": bcu,
             "u1": bcu,
@@ -308,6 +321,10 @@ class FreezingCavity(SegregatedDomain):
             #     gradpy = tvs.gradp["u1"].vector().vec().array
             #     np.save(pth + "gradpx_{:06d}.npy".format(i), gradpx)
             #     np.save(pth + "gradpy_{:06d}.npy".format(i), gradpy)
+        return
+
+    def scalar_hook(self):
+        print("skipping scalar_hook")
         return
 
     def theend_hook(self, SVD=False):
@@ -456,6 +473,7 @@ class FreezingCavity(SegregatedDomain):
         ax2.set_title("pressure")
         ax3.set_title("temperature")
         # plt.colorbar(c1, ax=ax1)
+        plt.colorbar(c1, ax=ax1)
         plt.colorbar(c2, ax=ax2)
         plt.colorbar(c3, ax=ax3)
         return fig, (ax1, ax2, ax3)

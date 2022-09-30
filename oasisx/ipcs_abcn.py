@@ -67,12 +67,12 @@ class FirstInner:
         # for the scalar solver and the first iter
         dmn.K = K
         dmn.M = M
+        dmn.KT = KT
         # for first iter only:
         self.A = A
         self.a_conv = a_conv
         self.a_scalar = a_scalar
         self.LT = LT
-        self.KT = KT
         self.NT = NT
         self.u_ab = u_ab
         return
@@ -86,10 +86,10 @@ class FirstInner:
         dmn = self.domain
         K = dmn.K
         M = dmn.M
+        KT = dmn.KT
         A = self.A
         a_conv = self.a_conv
         LT = self.LT
-        KT = self.KT
         NT = self.NT
         u_ab = self.u_ab
 
@@ -316,6 +316,7 @@ class ScalarSolver:
             c_sol.parameters.update(dmn.krylov_solvers)
         else:
             c_sol = LUSolver()
+        self.c_sol = c_sol
 
         # ... setup:
         # Allocate coefficient matrix and work vectors for scalars.
@@ -341,7 +342,7 @@ class ScalarSolver:
         M = dmn.M  # mass matrix from FirstInnerIter
         K = dmn.K  # stiffness matrix from FirstInnerIter
         Ta = dmn.Ta  # intermediate A from FirstInnerIter
-        KT = self.KT  # time dep. stiffness mat for LES from FirstInnerIter
+        KT = dmn.KT  # time dep. stiffness mat for LES from FirstInnerIter
 
         # # # # - - - scalar_assemble - - - # # #
         # # Just in case you want to use a different scalar convection. We will implement that when its actually needed
@@ -359,14 +360,18 @@ class ScalarSolver:
                 Ta.axpy(-0.5 / dmn.Schmidt_T[ci], KT[0], True)
             if dmn.nn_model != "NoModel":
                 Ta.axpy(-0.5 / dmn.Schmidt_T[ci], KT[0], True)
+            # # Add robin bc
+            # Ta.axpy(-0.5, dmn.kvds, True)  # Ta =  M/dt - .5 a_conv -0.5*D*K - 0.5 k v ds
 
-            # Compute rhs
+            # Compute rhs: b = t_1 * (M/dt - .5 a_conv -0.5*D*K)
             dmn.b[ci].zero()
             dmn.b[ci].axpy(1.0, Ta * dmn.q_1[ci].vector())
             dmn.b[ci].axpy(1.0, dmn.b0[ci])  # body forces
-
+            # dmn.b[ci].axpy(dmn.t_amb, dmn.kvds)  # robin bc
+            # # Subtract robin bc
+            # Ta.axpy(0.5, dmn.kvds, True)  # Ta =  M/dt - .5 a_conv -0.5*D*K
             # Subtract diffusion
-            Ta.axpy(0.5 * dmn.D[ci], K, True)  # Ta = M/dt - .5 a_conv
+            Ta.axpy(0.5 * dmn.D[ci], K, True)  # Ta = M/dt - .5 a_conv 
             if dmn.les_model != "NoModel":
                 Ta.axpy(0.5 / dmn.Schmidt_T[ci], KT[0], True)
             if dmn.nn_model != "NoModel":
@@ -382,9 +387,10 @@ class ScalarSolver:
         """Solve scalar equation."""
         dmn = self.domain
         K = dmn.K  # stiffness matrix from FirstInnerIter
-        Ta.axpy(0.5 * dmn.D[ci], K, True)  # Ta = M/dt + .5 a_conv + 0.5*D*K
         Ta = dmn.Ta
-        if len(dmn.scalar_components[ci]) > 1:
+        Ta.axpy(0.5 * dmn.D[ci], K, True)  # Ta = M/dt + .5 a_conv + 0.5*D*K
+        # Ta.axpy(0.5, dmn.kvds, True)  # Ta =  M/dt + .5 a_conv + 0.5*D*K + 0.5 k v ds
+        if len(dmn.scalar_components) > 1:
             # Reuse solver for all scalars.
             # This requires the same matrix and vectors to be used by c_sol.
             Tb = self.Tb
@@ -404,7 +410,11 @@ class ScalarSolver:
 
         else:
             [bc.apply(Ta, dmn.b[ci]) for bc in dmn.bcs[ci]]
-            self.c_sol.solve(Ta, dmn.q_[ci].vector(), dmn.b[ci])
+            # print((dmn.kvds[ci].instance().vec().array > 0).sum())
+            # indexptr, indices, data = Ta.instance().mat().getValuesCSR()
+            A = Ta + dmn.bt_lhs
+            b = dmn.b[ci] + dmn.bt_rhs
+            self.c_sol.solve(A, dmn.q_[ci].vector(), b)
 
         if len(dmn.scalar_components) > 1:
             Ta.axpy(-0.5 * dmn.D[ci], K, True)  # Subtract diffusion
