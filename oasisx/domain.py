@@ -29,8 +29,7 @@ class Domain:
 
     def body_force(self):
         """Specify body force"""
-        mesh = self.mesh
-        return df.Constant((0,) * mesh.geometry().dim())
+        return NotImplementedError()
 
     def pre_solve_hook(self):
         raise NotImplementedError()
@@ -54,7 +53,7 @@ class Domain:
         return
 
     def recommend_dt(self):
-        Cmax = 0.05
+        Cmax = 0.5
         dt = Cmax * self.mesh.hmin() / self.Umean
         print("recommended dt =", dt)
         return dt

@@ -25,25 +25,6 @@ from oasisx.io import parse_command_line
 from fractional_step import FractionalStep
 
 
-def rho_(T):
-    """
-    # see: https://www.epj-conferences.org/articles/epjconf/pdf/2011/05/epjconf_lam14_01024.pdf
-    Table 4 in Viscosity and volume properties of the Al-Cu melts.
-    N. Konstantinova, A. Kurochkin, and P. Popel
-    """
-    t = np.array([0.00, 1000])
-    r = np.array([2.0, 1.0])
-    f_rho = interp1d(t, r, kind="linear", bounds_error=False, fill_value="extrapolate")
-    return f_rho(T)  # kg/m3
-
-
-def mu_(T):
-    mu_liquidus = 1  # water
-    mu = np.array([(T - 650) ** 2 * 1000000.0]).ravel() + mu_liquidus
-    mu[T > 650] = mu_liquidus
-    return mu
-
-
 class FreezingCavity(SegregatedDomain):
     """Benchmark Computations of Laminar Flow Around a Cylinder"""
 
@@ -62,20 +43,19 @@ class FreezingCavity(SegregatedDomain):
         k = 205  # W/(m K)
         cp = 0.91 * 1000  # kJ/(kg K) *1000 = J/(kg K)
         rho = 2350  # kg /m3
-        k_r = 0.001
+        k_r = 0.00001
         alpha = k / (cp * rho)
-        g = 9.81
         self.bc_dict = {"fluid": 0, "bottom": 1, "right": 2, "top": 3, "left": 4}
-        self.t_init = Constant(670)
-        self.t_amb = Constant(600)
+        self.t_init = Constant(651)
+        self.t_amb = Constant(640)
         # self.t_feeder = Constant(670)
         self.k_top = Constant(0.0)
         self.k_lft = Constant(0.0)
         self.k_btm = Constant(0.0)
-        self.k_rgt = Constant(k_r)
-        self.g = Constant((0.0, -g))
+        self.k_rgt = Constant(k_r*0)
+        self.g = Constant((0.0, -9.81))  # used in body_force()
         self.dt = 1.0
-        self.T = 1000
+        self.T = 10000
         self.scalar_components = ["t"]
         self.D = {"t": Constant(alpha)}
 
@@ -117,34 +97,51 @@ class FreezingCavity(SegregatedDomain):
         bc1 = DirichletBC(VQ.sub(0), no_slip, mf, self.bc_dict["left"])
         bc2 = DirichletBC(VQ.sub(0), no_slip, mf, self.bc_dict["bottom"])
         bc3 = DirichletBC(VQ.sub(0), no_slip, mf, self.bc_dict["right"])
-        # bc4 = DirichletBC(VQ.sub(1), Constant(0), mf, self.bc_dict["top"])
-        bcs = [bc0, bc1, bc2, bc3]
+        bc4 = DirichletBC(VQ.sub(1), Constant(0), mf, self.bc_dict["top"])
+        bcs = [bc0, bc1, bc2, bc3, bc4]
 
         vup = TestFunction(VQ)
         up = TrialFunction(VQ)
-        # the solution will be in here:
-        up_ = Function(VQ)
+        up_ = Function(VQ)  # Function holding the solution
 
         u, p = split(up)  # Trial
         vu, vp = split(vup)  # Test
-        u_, p_ = split(up_)  # Function holding the solution
+        rho_0 = self.rho.vector().vec().array.mean()
         F = (
-            self.mu * inner(grad(vu), grad(u)) * dx
-            - inner(div(vu), p) * dx
-            - inner(vp, div(u)) * dx
-            - dot(self.g * self.rho, vu) * dx
+            - self.mu/rho_0 * inner(grad(vu), grad(u)) * dx
+            + inner(div(vu), p)/rho_0 * dx
+            + inner(vp, div(u)) * dx
+            + dot(self.g*self.rho, vu)/rho_0 * dx
         )
         solve(lhs(F) == rhs(F), up_, bcs=bcs)
         self.q_["u0"].vector().vec().array[:] = project(up_.sub(0).sub(0), self.VV["u0"]).vector().vec().array[:]
         self.q_["u1"].vector().vec().array[:] = project(up_.sub(0).sub(1), self.VV["u1"]).vector().vec().array[:]
         self.q_["p"].vector().vec().array[:] = project(up_.sub(1), self.VV["p"]).vector().vec().array[:]
+
+        print("mu_max:", self.mu.vector().vec().array[:].max())
+        print("u0_max:", self.q_["u0"].vector().vec().array[:].max())
+        print("u1_max:", self.q_["u1"].vector().vec().array[:].max())
+        
+        self.plot()
+        plt.savefig(self.temp_dir + "_init.png", dpi=300)
+        plt.close()
+        return
+
+    def declare_coefficients(self):
+        V, Q = self.VV["t"], self.VV["p"]
+        self.mu, self.nu, self.rho = Function(V), Function(V), Function(V)
+        return
+
+    def assemble_body_force(self):
+        print("updating body forces")
+        rho_0 = self.rho.vector().vec().array.mean()
+        self.f = [self.rho/rho_0*self.g[0], self.rho/rho_0*self.g[1]]
+        super().assemble_body_force()
         return
 
     def initialize_components(self):
         self.t_ = self.q_["t"]
         self.t_1 = self.q_1["t"]
-        V, Q = self.VV["t"], self.VV["p"]
-        self.mu, self.nu, self.rho = Function(V), Function(V), Function(V)
         self.t_.vector().vec().array[:] = self.t_init
         self.t_1.vector().vec().array[:] = self.t_init
 
@@ -154,16 +151,20 @@ class FreezingCavity(SegregatedDomain):
             self.q_1[ui].vector().vec().array[:] = 1e-6
             self.q_2[ui].vector().vec().array[:] = 1e-6
 
-        xyz = Q.tabulate_dof_coordinates().T
+
+        x, y = self.VV["u0"].tabulate_dof_coordinates().T
+        self.q_["t"].vector().vec().array = self.t_init.values() - x * .1
+        self.q_1["t"].vector().vec().array = self.t_init.values() - x * .1
+        self.update_coefficients()
+        # initial pressure = static pressure
+        xyz = self.VV["p"].tabulate_dof_coordinates().T
+        rho_0 = self.rho.vector().vec().array.mean()
         g_z = np.sum(xyz * g.values()[:, None], axis=0)
         # rho is incorporated in the pressure
-        self.q_["p"].vector().vec().array[:] = -g_z
-        self.q_1["p"].vector().vec().array[:] = -g_z
-
-        x, y = V.tabulate_dof_coordinates().T
-        self.q_["t"].vector().vec().array = self.t_init.values() - x * 10
-        self.q_1["t"].vector().vec().array = self.t_init.values() - x * 10
-        self.update_nu()
+        self.q_["p"].vector().vec().array[:] = -g_z/rho_0
+        self.q_1["p"].vector().vec().array[:] = -g_z/rho_0
+        self.stokes()
+        self.advance()
         self.stokes()
         self.advance()
         return
@@ -178,7 +179,7 @@ class FreezingCavity(SegregatedDomain):
         bc3 = DirichletBC(V, no_slip, mf, bc_dict["right"])
         bcu = [bc0, bc1, bc2, bc3]
         bcp = [DirichletBC(Q, Constant(0), mf, bc_dict["top"])]
-        bcp = []
+        # bcp = []
 
         lft, rgt = bc_dict["left"], bc_dict["right"]
         top, btm = bc_dict["top"], bc_dict["bottom"]
@@ -211,7 +212,7 @@ class FreezingCavity(SegregatedDomain):
         return
 
     def mu_(self, T):
-        mu_liquidus = 1  # water
+        mu_liquidus = 1.3 / 1000.  # in Pa*s; Water at 20°C: 1 mPa s = 1/1000 Pa s
         mu = np.array([(T - 650) ** 2 * 1000000.0]).ravel() + mu_liquidus
         mu[T > 650] = mu_liquidus
         return mu
@@ -222,21 +223,29 @@ class FreezingCavity(SegregatedDomain):
         Table 4 in Viscosity and volume properties of the Al-Cu melts.
         N. Konstantinova, A. Kurochkin, and P. Popel
         """
-        t = np.array([0.00, 1000])
-        r = np.array([2.0, 1.0])
+        t = np.array([0.00, 700., 750., 800., 850., 900.,
+                                950., 1000, 1050, 1100, 1150, 1200,
+                                1250, 1300, 1350, 1400, 1450, 1500])
+        r = np.array([2380.0, 2351.5, 2340.6, 2329.8, 2318.9, 2308.1,
+                            2297.2, 2286.3, 2275.5, 2264.6, 2253.8, 2242.9,
+                            2232.1, 2221.2, 2210.4, 2199.5, 2188.6, 2177.8])
+        # t = np.array([0.00, 660, 670, 1000])
+        # r = np.array([998.8, 998.8, 998.7, 998.7])
         f_rho = interp1d(
             t, r, kind="linear", bounds_error=False, fill_value="extrapolate"
         )
         return f_rho(T)  # kg/m3
 
-    def update_nu(self):
+    def update_coefficients(self):
         temperature_field = self.get_t()
         mu_updated = self.mu_(temperature_field)
         self.set_mu(mu_updated)
         rho_updated = self.rho_(temperature_field)
         self.set_rho(rho_updated)
-        nu_updated = mu_updated / rho_updated
+        rho_0 = self.rho.vector().vec().array.mean()
+        nu_updated = mu_updated / rho_0
         self.set_nu(nu_updated)
+        self.assemble_body_force()
         return
 
     def advance(self):
@@ -245,7 +254,7 @@ class FreezingCavity(SegregatedDomain):
         # Therfore, nu is not listed in scalar_components
         # and thus needs to be handled explicitly here.
         super().advance()
-        self.update_nu()
+        self.update_coefficients()
         return
 
     def get_rho(self):
@@ -279,25 +288,31 @@ class FreezingCavity(SegregatedDomain):
     #     dijitso config
 
     #     """
-    #     self.update_nu()
+    #     self.update_coefficients()
     #     return
 
     def start_timestep_hook(self, t, **kvargs):
         """Called at start of new timestep"""
         # self.update_bcs(t)
-        self.update_nu()
         pass
 
     def temporal_hook(self, t, tstep, ps, **kvargs):
         i = tstep - 1
         pth = self.temp_dir
+        mesh = self.mesh
+        u0 = self.q_["u0"].compute_vertex_values(mesh)
+        u1 = self.q_["u1"].compute_vertex_values(mesh)
+        nu = self.nu.compute_vertex_values(mesh)
+        u = (u0 ** 2 + u1 ** 2) ** 0.5
+        L = 1
+        Re = u*L/nu
+        C = u * self.dt/mesh.hmax()
+        print("Re, CFL", Re.max(), C.max())
 
-        if (i % self.plot_interval) == 0 or (t + 1e-6) > self.T:
-            u = self.q_["u0"].vector().vec().array  # 10942
-            v = self.q_["u1"].vector().vec().array
-            p = self.q_["p"].vector().vec().array
+        if (i % self.plot_interval) == 0 or (t + 1e-6) > self.T or (i<3):
             fig, axs = self.plot()
-            plt.savefig(pth + "frame_{:06d}.png".format(i))
+            plt.suptitle("t = {:.2f} s".format(t))
+            plt.savefig(pth + "frame_{:06d}.png".format(i), dpi=300)
             plt.close()
 
 
@@ -324,7 +339,7 @@ class FreezingCavity(SegregatedDomain):
         return
 
     def scalar_hook(self):
-        print("skipping scalar_hook")
+        # print("skipping scalar_hook")
         return
 
     def theend_hook(self, SVD=False):
@@ -443,13 +458,22 @@ class FreezingCavity(SegregatedDomain):
         plt.close()
 
     def plot(self):
-        # u, p = self.u_, self.p_
         mesh = self.mesh
         u = self.q_["u0"].compute_vertex_values(mesh)
         v = self.q_["u1"].compute_vertex_values(mesh)
-        p = self.q_["p"].compute_vertex_values(mesh)
+        p_ = self.q_["p"].compute_vertex_values(mesh)
         t = self.q_["t"].compute_vertex_values(mesh)
+        rho = self.rho.compute_vertex_values(mesh).copy()
+        mu = self.mu.compute_vertex_values(mesh).copy()
+        nu = self.nu.compute_vertex_values(mesh).copy()
+        p = p_*rho
+        # nu[nu>0.8] = 0.8
         # print(u.shape, v.shape, p.shape)
+        # self.b0["u0"].instance().vec().array
+        # x2, y2 = V.tabulate_dof_coordinates().T
+        # u = self.b_tmp["u0"].instance().vec().array
+        # v = self.b_tmp["u1"].instance().vec().array
+        # print(self.b_tmp["u1"].instance().vec().array.min())
         magnitude = (u ** 2 + v ** 2) ** 0.5
         # print(u.shape, v.shape, p.shape, magnitude.shape)
 
@@ -462,20 +486,25 @@ class FreezingCavity(SegregatedDomain):
         # pressure = p.compute_vertex_values(mesh)
         # print(x.shape, y.shape, u.shape, v.shape)
         fs = (12, 6)
-        fig, (ax1, ax2, ax3) = plt.subplots(1, 3, sharex=True, sharey=True, figsize=fs)
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex=True, sharey=True, figsize=fs)
         c1 = ax1.quiver(x, y, u, v, magnitude)
         c2 = ax2.tricontourf(x, y, tri, p, levels=40)
         c3 = ax3.tricontourf(x, y, tri, t, levels=40)
+        c4 = ax4.tricontourf(x, y, tri, rho, levels=40)
+        # ax4.plot(t, nu, "b.")
+        # print(p.min(), p.max())
         ax1.set_aspect("equal")
         ax2.set_aspect("equal")
         ax3.set_aspect("equal")
+        ax4.set_aspect("equal")
         ax1.set_title("velocity")
         ax2.set_title("pressure")
         ax3.set_title("temperature")
-        # plt.colorbar(c1, ax=ax1)
+        ax4.set_title("density")
         plt.colorbar(c1, ax=ax1)
         plt.colorbar(c2, ax=ax2)
         plt.colorbar(c3, ax=ax3)
+        plt.colorbar(c4, ax=ax4)
         return fig, (ax1, ax2, ax3)
 
 
