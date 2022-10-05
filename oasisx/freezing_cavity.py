@@ -109,7 +109,7 @@ class FreezingCavity(SegregatedDomain):
         rho_0 = self.rho.vector().vec().array.mean()
         F = (
             - self.mu/rho_0 * inner(grad(vu), grad(u)) * dx
-            + inner(div(vu), p)/rho_0 * dx
+            + inner(div(vu), p) * dx  # solve for p/rho_0!
             + inner(vp, div(u)) * dx
             + dot(self.g*self.rho, vu)/rho_0 * dx
         )
