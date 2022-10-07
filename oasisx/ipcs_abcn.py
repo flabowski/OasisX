@@ -75,10 +75,10 @@ class FirstInner:
         # a_conv from init: inner(v, dot(u_ab, nabla_grad(u))) * dx
         A = assemble(a_conv, tensor=A)
         A *= -0.5  # Negative convection on the rhs
-        A.axpy(1.0 / dmn.dt, M, True)  # Add mass
+        A.axpy(1.0 / dmn.dt, M, True)  # Add mass, A=-0.5*a_conv+1/dt*M
         # Set up scalar matrix for rhs using the same convection as velocity
         if len(dmn.scalar_components) > 0:
-            Ta = dmn.Ta  # = 1/dt * M + u_ab
+            Ta = dmn.Ta  # = 1/dt * M -.5* u_ab
             Ta.zero()
             Ta.axpy(1., A, True)
         # Add diffusion and compute rhs for all velocity components
@@ -94,9 +94,9 @@ class FirstInner:
             # Start with body force b0
             # TODO: dmn.b_tmp[ui].assign(dmn.b0[ui])
             dmn.b_tmp[ui].zero()
-            dmn.b_tmp[ui].axpy(1.0, dmn.b0[ui])
+            dmn.b_tmp[ui].axpy(1.0, dmn.b0[ui]*dmn.f[ui])
             # Add transient, convection and diffusion
-            dmn.b_tmp[ui].axpy(1.0, A * dmn.q_1[ui].vector())
+            dmn.b_tmp[ui].axpy(1.0, A * dmn.q_1[ui].vector())  # =b0 +(1/dt*M-0.5*a_conv-0.5*nu*K )*u
         # Reset matrix for lhs
         A *= -1.0
         A.axpy(2.0 / dmn.dt, M, True)

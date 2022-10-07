@@ -183,15 +183,6 @@ class SegregatedDomain(Domain):
         """
         return
 
-    def assemble_body_force(self):
-        if not self.f:
-            mesh = self.mesh
-            self.f = df.Constant((0,) * mesh.geometry().dim())
-            print("no body forces!")
-        for i, ui in enumerate(self.u_components):
-            self.b0[ui] = df.assemble(self.v * self.f[i] * df.dx)
-        return
-
     def declare_components(self):
         cd = self.constrained_domain
         mesh = self.mesh
@@ -233,6 +224,8 @@ class SegregatedDomain(Domain):
         # p_, p_1 removed, they are in q_, q_1
         self.declare_coefficients()  # in case there are any..
         self.b0 = b0 = {}  # holds body forces
+        for i, ui in enumerate(self.u_components):
+            self.b0[ui] = df.assemble(self.v * df.dx)
 
         # Get scalar sources
         self.fs = fs = self.scalar_source()

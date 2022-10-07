@@ -188,7 +188,10 @@ class FractionalStep:
 
             # TODO: Save solution if required and check for killoasis file
             # stop = io.save_solution()
+
+            ts = OasisTimer("advance / assemble bc")
             self.domain.advance()
+            ts.stop()
 
             # Print some information
             if tstep % self.domain.print_intermediate_info == 0:
