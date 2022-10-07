@@ -43,8 +43,8 @@ class FreezingCavity(SegregatedDomain):
         k = 205  # W/(m K)
         cp = 0.91 * 1000  # kJ/(kg K) *1000 = J/(kg K)
         rho = 2350  # kg /m3
-        k_r = 0.00001
-        alpha = k / (cp * rho)
+        alpha = 97. /1000**2  # k / (cp * rho)  # 97 mm**2/s
+        k_r = 0.00001  # wall
         self.bc_dict = {"fluid": 0, "bottom": 1, "right": 2, "top": 3, "left": 4}
         self.t_init = Constant(651)
         self.t_amb = Constant(640)
@@ -52,7 +52,7 @@ class FreezingCavity(SegregatedDomain):
         self.k_top = Constant(0.0)
         self.k_lft = Constant(0.0)
         self.k_btm = Constant(0.0)
-        self.k_rgt = Constant(k_r*0)
+        self.k_rgt = Constant(k_r)
         self.g = Constant((0.0, -9.81))  # used in body_force()
         self.dt = 1.0
         self.T = 10000
@@ -132,20 +132,13 @@ class FreezingCavity(SegregatedDomain):
         self.mu, self.nu, self.rho = Function(V), Function(V), Function(V)
         return
 
-    def assemble_body_force(self):
-        print("updating body forces")
-        rho_0 = self.rho.vector().vec().array.mean()
-        self.f = [self.rho/rho_0*self.g[0], self.rho/rho_0*self.g[1]]
-        super().assemble_body_force()
-        return
-
     def initialize_components(self):
+        print("initialize_components")
         self.t_ = self.q_["t"]
         self.t_1 = self.q_1["t"]
         self.t_.vector().vec().array[:] = self.t_init
         self.t_1.vector().vec().array[:] = self.t_init
 
-        g = self.g
         for ui in self.u_components:
             self.q_[ui].vector().vec().array[:] = 1e-6
             self.q_1[ui].vector().vec().array[:] = 1e-6
@@ -153,19 +146,26 @@ class FreezingCavity(SegregatedDomain):
 
 
         x, y = self.VV["u0"].tabulate_dof_coordinates().T
-        self.q_["t"].vector().vec().array = self.t_init.values() - x * .1
-        self.q_1["t"].vector().vec().array = self.t_init.values() - x * .1
+        self.q_["t"].vector().vec().array = self.t_init.values() #- x * .5
+        self.q_1["t"].vector().vec().array = self.t_init.values() #- x * .5
+        self.f = {"u0": None, "u1": None}
+        # if not self.f:
+        #     mesh = self.mesh
+        #     self.f = df.Constant((0,) * mesh.geometry().dim())
+        #     print("no body forces!")
         self.update_coefficients()
+        
         # initial pressure = static pressure
+        g = self.g
         xyz = self.VV["p"].tabulate_dof_coordinates().T
         rho_0 = self.rho.vector().vec().array.mean()
         g_z = np.sum(xyz * g.values()[:, None], axis=0)
         # rho is incorporated in the pressure
         self.q_["p"].vector().vec().array[:] = -g_z/rho_0
         self.q_1["p"].vector().vec().array[:] = -g_z/rho_0
-        self.stokes()
+        # self.stokes()
         self.advance()
-        self.stokes()
+        # self.stokes()
         self.advance()
         return
 
@@ -245,7 +245,8 @@ class FreezingCavity(SegregatedDomain):
         rho_0 = self.rho.vector().vec().array.mean()
         nu_updated = mu_updated / rho_0
         self.set_nu(nu_updated)
-        self.assemble_body_force()
+        self.f["u0"] = self.rho.vector()/rho_0*self.g.values()[0]
+        self.f["u1"] = self.rho.vector()/rho_0*self.g.values()[1]
         return
 
     def advance(self):
@@ -307,9 +308,16 @@ class FreezingCavity(SegregatedDomain):
         L = 1
         Re = u*L/nu
         C = u * self.dt/mesh.hmax()
-        print("Re, CFL", Re.max(), C.max())
+        CFL = C.max()
+        print("Re, CFL, dt", Re.max(), CFL, self.dt)
+        if CFL > 0.1:
+            self.dt *= 0.8
+            print("decreasing dt")
+        elif CFL < 0.05:
+            self.dt /= 0.8
+            print("increasing dt")
 
-        if (i % self.plot_interval) == 0 or (t + 1e-6) > self.T or (i<3):
+        if (i % self.plot_interval) == 0 or (t + 1e-6) > self.T or (i<3) or CFL>0.5:
             fig, axs = self.plot()
             plt.suptitle("t = {:.2f} s".format(t))
             plt.savefig(pth + "frame_{:06d}.png".format(i), dpi=300)
