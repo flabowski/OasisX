@@ -9,17 +9,21 @@ from __future__ import print_function
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d
+from scipy.special import erf
 from os import listdir, remove, mkdir, fsdecode  # , rename
 from os.path import isfile, join, dirname, exists, expanduser
 from datetime import datetime
 from shutil import copy2
+import inspect
 from oasisx.segregated_domain import SegregatedDomain
 from dolfin import Expression, DirichletBC, Mesh, XDMFFile, MeshValueCollection
 from dolfin import cpp, grad, ds, inner, dx, div, dot, solve, lhs, rhs, project
 from dolfin import Constant, Function, VectorElement, FiniteElement, plot
 from dolfin import FunctionSpace, TestFunction, TrialFunction, split, assemble
-#from ROM.snapshot_manager import Data
-#from low_rank_model_construction.proper_orthogonal_decomposition import row_svd
+from matplotlib.colors import LogNorm
+
+# from ROM.snapshot_manager import Data
+# from low_rank_model_construction.proper_orthogonal_decomposition import row_svd
 import json
 from oasisx.io import parse_command_line
 from fractional_step import FractionalStep
@@ -37,17 +41,30 @@ class FreezingCavity(SegregatedDomain):
         for a channel flow problem
         """
         super().__init__()
-        # problem parameters
-        # case = parameters["case"] if "case" in parameters else 1
-        # Umax = cases[case]["Um"]  # 0.3 or 1.5 or 1.5 * np.sin(np.pi * t / 8)
+        # Aluminium
         k = 205  # W/(m K)
         cp = 0.91 * 1000  # kJ/(kg K) *1000 = J/(kg K)
         rho = 2350  # kg /m3
-        alpha = 97. /1000**2  # k / (cp * rho)  # 97 mm**2/s
-        k_r = 0.00001  # wall
-        self.bc_dict = {"fluid": 0, "bottom": 1, "right": 2, "top": 3, "left": 4}
-        self.t_init = Constant(651)
-        self.t_amb = Constant(640)
+        alpha = 97.0 / 1000**2  # k / (cp * rho)  # 97 mm**2/s
+        k_r = 0.001  # wall
+        self.t_m = 660
+        self.sigma = 0.1
+        self.tau = 0.0001
+        t_init = self.t_m + 10
+        # # water:
+        # k = 0.5562  # W/(m K)
+        # cp = 4.2  # kJ / (kg K)
+        # rho = 997  # kg /m3
+        # alpha = k / (cp * rho)  # 132.8 mm**2/s
+        self.bc_dict = {
+            "fluid": 0,
+            "bottom": 1,
+            "right": 2,
+            "top": 3,
+            "left": 4,
+        }
+        self.t_init = Constant(t_init)
+        self.t_amb = Constant(650)
         # self.t_feeder = Constant(670)
         self.k_top = Constant(0.0)
         self.k_lft = Constant(0.0)
@@ -59,8 +76,7 @@ class FreezingCavity(SegregatedDomain):
         self.scalar_components = ["t"]
         self.D = {"t": Constant(alpha)}
 
-        self.pkg_dir = dirname(__file__).split("oasis")[0]
-        self.simulation_start = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.pkg_dir = inspect.getfile(SegregatedDomain).split("oasisx")[0]
         self.temp_dir = temp_dir = expanduser("~") + "/tmp/"
         msg = "is not empty. Do you want to remove all its content? [y/n]:"
         if exists(temp_dir):
@@ -83,6 +99,23 @@ class FreezingCavity(SegregatedDomain):
         self.pdiff = np.zeros((m, self.max_iter))
         self.t_u = np.empty((m,))
         self.t_p = np.empty((m,))
+        self.stop = False
+
+        self.mesh_from_file()
+        self.list_problem_components()
+        self.declare_components()
+        self.initialize_components()
+        self.create_bcs()
+        # TODO: LES setup
+        # TODO: Non-Newtonian setup.
+        self.apply_bcs()
+        if self.restart:
+            self.load()
+            self.update_coefficients()
+        # self.advance()
+        self.simulation_start = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.temporal_hook(0.0, 0, None)  # plots initial condition
+        # asd
         return
 
     def stokes(self):
@@ -108,20 +141,26 @@ class FreezingCavity(SegregatedDomain):
         vu, vp = split(vup)  # Test
         rho_0 = self.rho.vector().vec().array.mean()
         F = (
-            - self.mu/rho_0 * inner(grad(vu), grad(u)) * dx
+            -self.mu / rho_0 * inner(grad(vu), grad(u)) * dx
             + inner(div(vu), p) * dx  # solve for p/rho_0!
             + inner(vp, div(u)) * dx
-            + dot(self.g*self.rho, vu)/rho_0 * dx
+            + dot(self.g * self.rho, vu) / rho_0 * dx
         )
         solve(lhs(F) == rhs(F), up_, bcs=bcs)
-        self.q_["u0"].vector().vec().array[:] = project(up_.sub(0).sub(0), self.VV["u0"]).vector().vec().array[:]
-        self.q_["u1"].vector().vec().array[:] = project(up_.sub(0).sub(1), self.VV["u1"]).vector().vec().array[:]
-        self.q_["p"].vector().vec().array[:] = project(up_.sub(1), self.VV["p"]).vector().vec().array[:]
+        self.q_["u0"].vector().vec().array[:] = (
+            project(up_.sub(0).sub(0), self.VV["u0"]).vector().vec().array[:]
+        )
+        self.q_["u1"].vector().vec().array[:] = (
+            project(up_.sub(0).sub(1), self.VV["u1"]).vector().vec().array[:]
+        )
+        self.q_["p"].vector().vec().array[:] = (
+            project(up_.sub(1), self.VV["p"]).vector().vec().array[:]
+        )
 
         print("mu_max:", self.mu.vector().vec().array[:].max())
         print("u0_max:", self.q_["u0"].vector().vec().array[:].max())
         print("u1_max:", self.q_["u1"].vector().vec().array[:].max())
-        
+
         self.plot()
         plt.savefig(self.temp_dir + "_init.png", dpi=300)
         plt.close()
@@ -130,6 +169,7 @@ class FreezingCavity(SegregatedDomain):
     def declare_coefficients(self):
         V, Q = self.VV["t"], self.VV["p"]
         self.mu, self.nu, self.rho = Function(V), Function(V), Function(V)
+        self.phi_l = Function(V)
         return
 
     def initialize_components(self):
@@ -140,29 +180,28 @@ class FreezingCavity(SegregatedDomain):
         self.t_1.vector().vec().array[:] = self.t_init
 
         for ui in self.u_components:
-            self.q_[ui].vector().vec().array[:] = 1e-6
-            self.q_1[ui].vector().vec().array[:] = 1e-6
-            self.q_2[ui].vector().vec().array[:] = 1e-6
-
+            self.q_[ui].vector().vec().array[:] = 0.0
+            self.q_1[ui].vector().vec().array[:] = 0.0
+            self.q_2[ui].vector().vec().array[:] = 0.0
 
         x, y = self.VV["u0"].tabulate_dof_coordinates().T
-        self.q_["t"].vector().vec().array = self.t_init.values() #- x * .5
-        self.q_1["t"].vector().vec().array = self.t_init.values() #- x * .5
+        self.q_["t"].vector().vec().array = self.t_init.values()  # - x * .5
+        self.q_1["t"].vector().vec().array = self.t_init.values()  # - x * .5
         self.f = {"u0": None, "u1": None}
         # if not self.f:
         #     mesh = self.mesh
         #     self.f = df.Constant((0,) * mesh.geometry().dim())
         #     print("no body forces!")
         self.update_coefficients()
-        
+
         # initial pressure = static pressure
         g = self.g
         xyz = self.VV["p"].tabulate_dof_coordinates().T
         rho_0 = self.rho.vector().vec().array.mean()
         g_z = np.sum(xyz * g.values()[:, None], axis=0)
         # rho is incorporated in the pressure
-        self.q_["p"].vector().vec().array[:] = -g_z/rho_0
-        self.q_1["p"].vector().vec().array[:] = -g_z/rho_0
+        self.q_["p"].vector().vec().array[:] = -g_z / rho_0
+        self.q_1["p"].vector().vec().array[:] = -g_z / rho_0
         # self.stokes()
         self.advance()
         # self.stokes()
@@ -183,21 +222,25 @@ class FreezingCavity(SegregatedDomain):
 
         lft, rgt = bc_dict["left"], bc_dict["right"]
         top, btm = bc_dict["top"], bc_dict["bottom"]
-        v, ds_, t = self.v, self.ds_, self.u  # we use the same trial function as 
+        v, ds_, t = (
+            self.v,
+            self.ds_,
+            self.u,
+        )  # we use the same trial function as
         t1, t_amb = self.q_1["t"], self.t_amb
         # ... = ... - k (t-t_amb) * v * ds; with t = (t^n+t^{n-1})/2
         # t^n * (k*v*ds) = - t^{n-1} * (k*v*ds) + t_amb * (k*v*ds)
-        self.bt_lhs = 1.0 * assemble(  # 0.5 for c-n
-            + self.k_lft * t * v * ds_(lft)
+        self.bt_lhs = 1.0 * assemble(  # 0.5 for C-N.
+            +self.k_lft * t * v * ds_(lft)
             + self.k_rgt * t * v * ds_(rgt)
             + self.k_top * t * v * ds_(top)
             + self.k_btm * t * v * ds_(btm)
         )
         self.bt_rhs = assemble(
-            + self.k_lft * (-0.0 * t1+t_amb) * v * ds_(lft)  # 0.5 for c-n
-            + self.k_rgt * (-0.0 * t1+t_amb) * v * ds_(rgt)
-            + self.k_top * (-0.0 * t1+t_amb) * v * ds_(top)
-            + self.k_btm * (-0.0 * t1+t_amb) * v * ds_(btm)
+            +self.k_lft * (-0.0 * t1 + t_amb) * v * ds_(lft)  # 0.5 for c-n
+            + self.k_rgt * (-0.0 * t1 + t_amb) * v * ds_(rgt)
+            + self.k_top * (-0.0 * t1 + t_amb) * v * ds_(top)
+            + self.k_btm * (-0.0 * t1 + t_amb) * v * ds_(btm)
         )
         # indexptr, indices, data = self.bt_lhs.instance().mat().getValuesCSR()
         # print(indexptr.shape, indices.shape, data.shape)
@@ -212,9 +255,14 @@ class FreezingCavity(SegregatedDomain):
         return
 
     def mu_(self, T):
-        mu_liquidus = 1.3 / 1000.  # in Pa*s; Water at 20°C: 1 mPa s = 1/1000 Pa s
-        mu = np.array([(T - 650) ** 2 * 1000000.0]).ravel() + mu_liquidus
-        mu[T > 650] = mu_liquidus
+        mu_l = 1.3 / 1000.0  # in Pa*s
+        # Water at 20°C: 1 mPa s = 1/1000 Pa s
+        mu = np.array([(T - 660) ** 2 * 1000000.0]).ravel() + mu_l  # mushy z.
+        mu[T >= 660] = mu_l
+        mu[T < 660] = 1e6  # no mushy zone
+        # mu_liquidus = 1.787 / 1000.  # in Pa*s; Water at 20°C: 1 mPa s = 1/1000 Pa s
+        # mu = np.array([(T - 0) ** 2 * 1000000.0]).ravel() + mu_liquidus
+        # mu[T > 0] = mu_liquidus
         return mu
 
     def rho_(self, T):
@@ -223,30 +271,38 @@ class FreezingCavity(SegregatedDomain):
         Table 4 in Viscosity and volume properties of the Al-Cu melts.
         N. Konstantinova, A. Kurochkin, and P. Popel
         """
-        t = np.array([0.00, 700., 750., 800., 850., 900.,
-                                950., 1000, 1050, 1100, 1150, 1200,
-                                1250, 1300, 1350, 1400, 1450, 1500])
-        r = np.array([2380.0, 2351.5, 2340.6, 2329.8, 2318.9, 2308.1,
-                            2297.2, 2286.3, 2275.5, 2264.6, 2253.8, 2242.9,
-                            2232.1, 2221.2, 2210.4, 2199.5, 2188.6, 2177.8])
-        # t = np.array([0.00, 660, 670, 1000])
-        # r = np.array([998.8, 998.8, 998.7, 998.7])
+        # t = np.array([0.00, 700., 750., 800., 850., 900.,
+        #                         950., 1000, 1050, 1100, 1150, 1200,
+        #                         1250, 1300, 1350, 1400, 1450, 1500])
+        # r = np.array([2380.0, 2351.5, 2340.6, 2329.8, 2318.9, 2308.1,
+        #                     2297.2, 2286.3, 2275.5, 2264.6, 2253.8, 2242.9,
+        #                     2232.1, 2221.2, 2210.4, 2199.5, 2188.6, 2177.8])
+        # t = np.array([0.00, 660, 700])
+        # r = np.array([2368, 2368, 2357])
+        t = [500.0, 600.00, 660.0, 700.0, 750.0, 800.0, 850.0, 900.0]
+        # r = [2412, 2384.5, 2368, 2357, 2345, 2332, 2319, 2304]  # w mushy zone
+        r = [2368, 2368.0, 2368, 2357, 2345, 2332, 2319, 2304]  # no mushy zone
         f_rho = interp1d(
             t, r, kind="linear", bounds_error=False, fill_value="extrapolate"
         )
         return f_rho(T)  # kg/m3
 
     def update_coefficients(self):
-        temperature_field = self.get_t()
-        mu_updated = self.mu_(temperature_field)
+        T = self.get_t()
+        mu_updated = self.mu_(T)
         self.set_mu(mu_updated)
-        rho_updated = self.rho_(temperature_field)
+        rho_updated = self.rho_(T)
         self.set_rho(rho_updated)
         rho_0 = self.rho.vector().vec().array.mean()
         nu_updated = mu_updated / rho_0
         self.set_nu(nu_updated)
-        self.f["u0"] = self.rho.vector()/rho_0*self.g.values()[0]
-        self.f["u1"] = self.rho.vector()/rho_0*self.g.values()[1]
+        T_m = self.t_m
+        s = self.sigma
+        self.phi_l.vector().vec().array = (
+            1 / 2 * (1 + erf((T - T_m) / (s * 2**0.5)))
+        )
+        self.f["u0"] = self.rho.vector() / rho_0 * self.g.values()[0]
+        self.f["u1"] = self.rho.vector() / rho_0 * self.g.values()[1]
         return
 
     def advance(self):
@@ -298,18 +354,18 @@ class FreezingCavity(SegregatedDomain):
         pass
 
     def temporal_hook(self, t, tstep, ps, **kvargs):
-        i = tstep - 1
+        # i = tstep - 1
         pth = self.temp_dir
         mesh = self.mesh
         u0 = self.q_["u0"].compute_vertex_values(mesh)
         u1 = self.q_["u1"].compute_vertex_values(mesh)
         nu = self.nu.compute_vertex_values(mesh)
-        u = (u0 ** 2 + u1 ** 2) ** 0.5
+        u = (u0**2 + u1**2) ** 0.5
         L = 1
-        Re = u*L/nu
-        C = u * self.dt/mesh.hmax()
+        # Re = u * L / nu
+        C = u * self.dt / mesh.hmax()
         CFL = C.max()
-        print("Re, CFL, dt", Re.max(), CFL, self.dt)
+        print(tstep, "CFL, dt", CFL, self.dt)
         if CFL > 0.1:
             self.dt *= 0.8
             print("decreasing dt")
@@ -317,24 +373,29 @@ class FreezingCavity(SegregatedDomain):
             self.dt /= 0.8
             print("increasing dt")
 
-        if (i % self.plot_interval) == 0 or (t + 1e-6) > self.T or (i<3) or CFL>0.5:
+        if (
+            (tstep % self.plot_interval) == 0
+            or (t + 1e-6) > self.T
+            or (tstep < 3)
+            or CFL > 0.5
+        ):
+            print(tstep, "plotting q_")
             fig, axs = self.plot()
             plt.suptitle("t = {:.2f} s".format(t))
-            plt.savefig(pth + "frame_{:06d}.png".format(i), dpi=300)
+            plt.savefig(pth + "frame_{:06d}.png".format(tstep), dpi=300)
             plt.close()
 
-
-        if (i % self.save_step) == 0:
+        if (tstep % self.save_step) == 0:
             # u = self.q_["u0"].compute_vertex_values(mesh)  # 2805
             u = self.q_["u0"].vector().vec().array  # 10942
             v = self.q_["u1"].vector().vec().array
             p = self.q_["p"].vector().vec().array
             t = self.q_["t"].vector().vec().array
-            #dpx, dpy = ps.pressure_gradient()
-            np.save(pth + "u_{:06d}.npy".format(i), u)
-            np.save(pth + "v_{:06d}.npy".format(i), v)
-            np.save(pth + "p_{:06d}.npy".format(i), p)
-            np.save(pth + "t_{:06d}.npy".format(i), t)
+            # dpx, dpy = ps.pressure_gradient()
+            np.save(pth + "u_{:06d}.npy".format(tstep), u)
+            np.save(pth + "v_{:06d}.npy".format(tstep), v)
+            np.save(pth + "p_{:06d}.npy".format(tstep), p)
+            np.save(pth + "t_{:06d}.npy".format(tstep), t)
             # np.save(pth + "dpx_{:06d}.npy".format(i), dpx)
             # np.save(pth + "dpy_{:06d}.npy".format(i), dpy)
             # tvs = kvargs.get("tvs", None)
@@ -344,6 +405,15 @@ class FreezingCavity(SegregatedDomain):
             #     gradpy = tvs.gradp["u1"].vector().vec().array
             #     np.save(pth + "gradpx_{:06d}.npy".format(i), gradpx)
             #     np.save(pth + "gradpy_{:06d}.npy".format(i), gradpy)
+        # check if everything is solid
+        if np.all(self.mu.vector().vec().array > 1e10):
+            self.stop = True
+            print("ALL_SOLIDIFIED")
+
+        if tstep == 1000:
+            print(tstep, "saving")
+            self.save()
+            # asd
         return
 
     def scalar_hook(self):
@@ -351,10 +421,15 @@ class FreezingCavity(SegregatedDomain):
         return
 
     def theend_hook(self, SVD=False):
+        tmp_pth = self.temp_dir
+        fig, axs = self.plot()
+        plt.suptitle("t = final")
+        plt.savefig(tmp_pth + "frame_9999.png", dpi=300)
+        plt.close()
         print("post processing:")
         pth = self.pkg_dir + "results/" + self.simulation_start + "/"
+        print("moving results to", pth)
         mkdir(pth)
-        tmp_pth = self.temp_dir
         # save meshes as well as some other data
         V, Q = self.VV["u0"], self.VV["p"]
         # np.save(pth + "drag.npy", self.C_D)
@@ -401,8 +476,8 @@ class FreezingCavity(SegregatedDomain):
             print(quantity, X_q.min(), X_q.max(), X_q.mean())
             np.save(pth + "X_" + quantity + ".npy", X_q)
 
-            #my_data = Data(X_q, False)
-            #X_n = my_data.normalise()
+            # my_data = Data(X_q, False)
+            # X_n = my_data.normalise()
             # if SVD:
             #     print("SVD of a ", X_n.shape, "matrix:")
             #     c = max(1, X_n.shape[1] // 2000)
@@ -474,7 +549,7 @@ class FreezingCavity(SegregatedDomain):
         rho = self.rho.compute_vertex_values(mesh).copy()
         mu = self.mu.compute_vertex_values(mesh).copy()
         nu = self.nu.compute_vertex_values(mesh).copy()
-        p = p_*rho
+        p = p_ * rho
         # nu[nu>0.8] = 0.8
         # print(u.shape, v.shape, p.shape)
         # self.b0["u0"].instance().vec().array
@@ -482,7 +557,7 @@ class FreezingCavity(SegregatedDomain):
         # u = self.b_tmp["u0"].instance().vec().array
         # v = self.b_tmp["u1"].instance().vec().array
         # print(self.b_tmp["u1"].instance().vec().array.min())
-        magnitude = (u ** 2 + v ** 2) ** 0.5
+        magnitude = (u**2 + v**2) ** 0.5
         # print(u.shape, v.shape, p.shape, magnitude.shape)
 
         # velocity = u.compute_vertex_values(mesh)
@@ -494,9 +569,13 @@ class FreezingCavity(SegregatedDomain):
         # pressure = p.compute_vertex_values(mesh)
         # print(x.shape, y.shape, u.shape, v.shape)
         fs = (12, 6)
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, sharex=True, sharey=True, figsize=fs)
-        c1 = ax1.quiver(x, y, u, v, magnitude)
-        c2 = ax2.tricontourf(x, y, tri, p, levels=40)
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(
+            2, 2, sharex=True, sharey=True, figsize=fs
+        )
+        c1 = ax1.quiver(
+            x, y, u, v, magnitude, scale=1.0, angles="xy", scale_units="xy"
+        )
+        c2 = ax2.tricontourf(x, y, tri, nu, levels=40, norm=LogNorm())
         c3 = ax3.tricontourf(x, y, tri, t, levels=40)
         c4 = ax4.tricontourf(x, y, tri, rho, levels=40)
         # ax4.plot(t, nu, "b.")
@@ -507,29 +586,35 @@ class FreezingCavity(SegregatedDomain):
         ax4.set_aspect("equal")
         ax1.set_title("velocity")
         ax2.set_title("pressure")
+        ax2.set_title("viscosity")
         ax3.set_title("temperature")
         ax4.set_title("density")
-        plt.colorbar(c1, ax=ax1)
+        vel_bar = plt.colorbar(c1, ax=ax1)
         plt.colorbar(c2, ax=ax2)
-        plt.colorbar(c3, ax=ax3)
-        plt.colorbar(c4, ax=ax4)
+        t_bar = plt.colorbar(c3, ax=ax3)
+        rho_bar = plt.colorbar(c4, ax=ax4)
+        t_bar.formatter.set_useOffset(False)
+        t_bar.update_ticks()
         return fig, (ax1, ax2, ax3)
 
 
 if __name__ == "__main__":
-    pkg_dir = dirname(__file__).split("oasisx")[0]
+    pkg_dir = inspect.getfile(SegregatedDomain).split("oasisx")[0]
     path_to_config = pkg_dir + "/resources/freezing_cavity/"
+    path_to_config = pkg_dir + "/checkpoints/20230331_171543/"
     config_file = path_to_config + "config.json"
     print(config_file)
     config = json.load(open(file=config_file, encoding="utf-8"))
-    commandline_args = parse_command_line()
+    # commandline_args = parse_command_line()
 
     my_domain = FreezingCavity(config)
-    my_domain.set_parameters(commandline_args)
-    #my_domain.mesh_name = pkg_dir + "/resources/freezing_cavity/mesh.xdmf"
-    my_domain.mesh_from_file()
-    
+    # my_domain.set_parameters(commandline_args)
+    # my_domain.mesh_from_file()
+    print("restart", my_domain.restart)
+
     algorithm = FractionalStep(my_domain)
+    # if my_domain.restart:
+
     my_domain.plot()
     algorithm.run()
     pth = pkg_dir + "results/" + my_domain.simulation_start + "/"

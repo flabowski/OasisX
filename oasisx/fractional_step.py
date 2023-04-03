@@ -20,19 +20,13 @@ import matplotlib
 class FractionalStep:
     def __init__(self, domain):
         np.set_printoptions(suppress=True)
-        matplotlib.use("Agg")  # Qt5Agg for normal interactive, Agg for offscreen
+        matplotlib.use(
+            "Agg"
+        )  # Qt5Agg for normal interactive, Agg for offscreen
         plt.close("all")
         self.initial_memory_use = getMemoryUsage()
         self.oasis_memory = OasisMemoryUsage("Start")
 
-        domain.list_problem_components()
-        domain.declare_components()
-        domain.initialize_components()
-        domain.create_bcs()
-        # TODO: Read in previous solution if restarting
-        # TODO: LES setup
-        # TODO: Non-Newtonian setup.
-        domain.apply_bcs()
         self.domain = domain
 
     def run(self):
@@ -75,12 +69,12 @@ class FractionalStep:
         prs = solver.PressureStep(self.domain)
         for ci in self.domain.scalar_components:
             scs = solver.ScalarSolver(self.domain)
-        stop = False
         t = 0.0
         tstep = 0
         total_inner_iterations = 0
-        while (t - df.DOLFIN_EPS) < (self.domain.T - self.domain.dt) and not stop:
-
+        t_end = self.domain.T - self.domain.dt
+        while (t - df.DOLFIN_EPS) < t_end and not self.domain.stop:
+            print(t, self.domain.stop)
             # if tstep == 30:
             #     stop = True
 
@@ -119,7 +113,9 @@ class FractionalStep:
                     tvs.A = fit.A
                 udiff = 0
                 for i, ui in enumerate(self.domain.u_components):
-                    t1 = OasisTimer("Solving tentative velocity " + ui, print_info)
+                    t1 = OasisTimer(
+                        "Solving tentative velocity " + ui, print_info
+                    )
                     tvs.assemble(ui=ui)  # uses p_ to compute gradp
                     udiff = tvs.solve(ui=ui, udiff=udiff)
                     self.domain.velocity_tentative_hook(ui=ui)
@@ -146,9 +142,13 @@ class FractionalStep:
                     phi = np.abs(self.domain.dp_.vector().vec().array)
                     print(
                         inner_iter,
-                        "{:.6f}\t{:.8f}\t{:.8f}".format(udiff, phi.max(), e3.max()),
+                        "{:.6f}\t{:.8f}\t{:.8f}".format(
+                            udiff, phi.max(), e3.max()
+                        ),
                     )
-                self.domain.print_velocity_pressure_info(num_iter, inner_iter, udiff)
+                self.domain.print_velocity_pressure_info(
+                    num_iter, inner_iter, udiff
+                )
             if debug:
                 print(
                     "step {:.0f}, time: {:.6f} s. Inner loop stopped after {:.0f}"
@@ -175,7 +175,9 @@ class FractionalStep:
 
             # Scalar solver
             if len(self.domain.scalar_components) > 0:
-                t3 = OasisTimer("Solving scalar {}".format(ci))  # print_solve_info
+                t3 = OasisTimer(
+                    "Solving scalar {}".format(ci)
+                )  # print_solve_info
                 scs.assemble()
                 for ci in self.domain.scalar_components:
                     scs.solve(ci)
@@ -204,13 +206,17 @@ class FractionalStep:
             if (
                 self.domain.AB_projection_pressure
                 and t < (self.domain.T - tstep * df.DOLFIN_EPS)
-                and not stop
+                and not self.domain.stop
             ):
-                self.domain.q_["p"].vector().axpy(0.5, self.domain.dp_.vector())
+                self.domain.q_["p"].vector().axpy(
+                    0.5, self.domain.dp_.vector()
+                )
 
         total_timer.stop()
         df.list_timings(df.TimingClear.keep, [df.TimingType.wall])
-        info_red("Total computing time = {0:f}".format(total_timer.elapsed()[0]))
+        info_red(
+            "Total computing time = {0:f}".format(total_timer.elapsed()[0])
+        )
         self.oasis_memory("Final memory use ")
         # total_initial_dolfin_memory
         m = df.MPI.sum(df.MPI.comm_world, self.initial_memory_use)
