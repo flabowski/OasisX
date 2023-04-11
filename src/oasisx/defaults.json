@@ -1,0 +1,74 @@
+{
+  "iters_on_first_timestep": 5,
+  "use_krylov_solvers": true,
+  "print_intermediate_info": 100,
+  "print_velocity_pressure_convergence": false,
+  "plot_interval": 100,
+  "checkpoint": 50,
+  "save_step": 10,
+  "restart_folder": null,
+  "output_timeseries_as_vector": true,
+  "killtime": null,
+  "les_model": "NoModel",
+  "Smagorinsky": {
+    "Cs": 0.1677
+  },
+  "Wale": {
+    "Cw": 0.325
+  },
+  "DynamicSmagorinsky": {
+    "Cs_comp_step": 1
+  },
+  "KineticEnergySGS": {
+    "Ck": 0.08,
+    "Ce": 1.05
+  },
+  "nn_model": "NoModel",
+  "ModifiedCross": {
+    "lam": 3.736,
+    "m_param": 2.406,
+    "a_param": 0.34,
+    "mu_inf": 0.00372,
+    "mu_o": 0.09,
+    "rho": 1085
+  },
+  "testing": false,
+  "krylov_solvers": {
+    "monitor_convergence": false,
+    "report": false,
+    "error_on_nonconvergence": false,
+    "nonzero_initial_guess": true,
+    "maximum_iterations": 200,
+    "relative_tolerance": 1e-08,
+    "absolute_tolerance": 1e-08
+  },
+  "velocity_update_solver": {
+    "method": "default",
+    "solver_type": "cg",
+    "preconditioner_type": "jacobi",
+    "low_memory_version": false
+  },
+  "velocity_krylov_solver": {
+    "solver_type": "bicgstab",
+    "preconditioner_type": "jacobi"
+  },
+  "pressure_krylov_solver": {
+    "solver_type": "gmres",
+    "preconditioner_type": "hypre_amg"
+  },
+  "scalar_krylov_solver": {
+    "solver_type": "bicgstab",
+    "preconditioner_type": "jacobi"
+  },
+  "nut_krylov_solver": {
+    "method": "WeightedAverage",
+    "solver_type": "cg",
+    "preconditioner_type": "jacobi"
+  },
+  "nu_nn_krylov_solver": {
+    "method": "WeightedAverage",
+    "solver_type": "cg",
+    "preconditioner_type": "jacobi"
+  },
+  "constrained_domain": null
+}

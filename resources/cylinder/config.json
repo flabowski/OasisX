@@ -1,7 +1,7 @@
 {
 "_comment": "leave your comment here",
-"mesh_name": "../resources/cylinder/mesh.xdmf",
-"facet_name": "../resources/cylinder/mf.xdmf",
+"mesh_name": "./resources/cylinder/mesh.xdmf",
+"facet_name": "./resources/cylinder/mf.xdmf",
 "frequency": 400,
 "max_iter": 1,
 "save_step": 10,
