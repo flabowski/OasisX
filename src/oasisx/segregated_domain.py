@@ -193,7 +193,8 @@ class SegregatedDomain(Domain):
         pass
 
     def print_velocity_pressure_info(self, num_iter, inner_iter, udiff):
-        if num_iter > 1 and self.print_velocity_pressure_convergence:
+        cond = self.config["print_velocity_pressure_convergence"]
+        if num_iter > 1 and cond:
             if inner_iter == 1:
                 info_blue("  Inner iterations velocity pressure:")
                 info_blue("                 error u  error p")
@@ -205,13 +206,13 @@ class SegregatedDomain(Domain):
 
 
 if __name__ == "__main__":
-    print()
+    # print()
     seg_domain = SegregatedDomain()
 
-    import json
+    # import json
 
-    with open("./solver_defaults.json", "r") as infile:
-        defaults = json.load(infile)
-    seg_domain.__dict__ = defaults
+    # with open("./solver_defaults.json", "r") as infile:
+    #     defaults = json.load(infile)
+    # seg_domain.__dict__ = defaults
     # with open("./defaults.json", "x") as outfile:
     #     json.dump(seg_domain.__dict__, outfile, indent=2)

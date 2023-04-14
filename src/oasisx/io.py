@@ -12,6 +12,51 @@ import dolfin as df
 import sys
 import json
 from oasisx.logging import info_red
+import meshio
+
+
+def mesh_from_file(pth):
+    # pth = "/".join(origin.split("/")[:-1])
+    mesh = df.Mesh()
+    print(path.abspath(pth))
+    with df.XDMFFile(pth + "/mesh.xdmf") as infile:
+        infile.read(mesh)
+    dim = mesh.topology().dim()
+    mvc = df.MeshValueCollection("size_t", mesh, dim - 1)
+    with df.XDMFFile(pth + "/mf.xdmf") as infile:
+        infile.read(mvc, "name_to_read")
+    mf = df.cpp.mesh.MeshFunctionSizet(mesh, mvc)
+    ds_ = df.ds(subdomain_data=mf, domain=mesh)
+    return mesh, mf, ds_
+
+
+# def mesh_to_file(msh):
+#     for cell in msh.cells:
+#         if cell.type == "triangle":
+#             triangle_cells = cell.data
+#         elif  cell.type == "tetra":
+#             tetra_cells = cell.data
+
+#     for key in msh.cell_data_dict["gmsh:physical"].keys():
+#         if key == "triangle":
+#             triangle_data = msh.cell_data_dict["gmsh:physical"][key]
+#         elif key == "tetra":
+#             tetra_data = msh.cell_data_dict["gmsh:physical"][key]
+#     tetra_mesh = meshio.Mesh(points=msh.points, cells={"tetra": tetra_cells})
+#     triangle_mesh =meshio.Mesh(points=msh.points,
+#                                cells=[("triangle", triangle_cells)],
+#                                cell_data={"name_to_read":[triangle_data]})
+#     meshio.write("mesh.xdmf", tetra_mesh)
+
+#     meshio.write("mf.xdmf", triangle_mesh)
+#     return
+
+
+def load_json(pth):
+    with open(file=pth, encoding="utf-8") as infile:
+        some_dict = json.load(infile)
+    some_dict["origin"] = pth
+    return some_dict
 
 
 def convert(input):
@@ -214,7 +259,9 @@ def save_tstep_solution_h5(
             pickle.dump(NS_parameters, f)
 
 
-def save_checkpoint_solution_h5(tstep, q_, q_1, newfolder, u_components, NS_parameters):
+def save_checkpoint_solution_h5(
+    tstep, q_, q_1, newfolder, u_components, NS_parameters
+):
     """Overwrite solution in Checkpoint folder.
 
     For safety reasons, in case the solver is interrupted, take backup of
@@ -277,7 +324,9 @@ def check_if_kill(folder, killtime, total_timer):
         elapsed_time = float(total_timer.elapsed()[0])
         if killtime is not None and killtime <= elapsed_time:
             if df.MPI.rank(df.MPI.comm_world) == 0:
-                info_red("Given killtime reached! Stopping simulations cleanly...")
+                info_red(
+                    "Given killtime reached! Stopping simulations cleanly..."
+                )
             return True
         else:
             return False
@@ -317,12 +366,22 @@ def check_if_reset_statistics(folder):
 
 
 def init_from_restart(
-    restart_folder, sys_comp, uc_comp, u_components, q_, q_1, q_2, tstep, **NS_namespace
+    restart_folder,
+    sys_comp,
+    uc_comp,
+    u_components,
+    q_,
+    q_1,
+    q_2,
+    tstep,
+    **NS_namespace
 ):
     """Initialize solution from checkpoint files"""
     if restart_folder:
         if df.MPI.rank(df.MPI.comm_world) == 0:
-            info_red("Restarting from checkpoint at time step {}".format(tstep))
+            info_red(
+                "Restarting from checkpoint at time step {}".format(tstep)
+            )
 
         for ui in sys_comp:
             filename = path.join(restart_folder, ui + ".h5")

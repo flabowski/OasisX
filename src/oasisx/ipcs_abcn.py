@@ -24,9 +24,10 @@ class FirstInner:
     A: coefficient matrix (needs reassembling)
     """
 
-    def __init__(self, domain):
+    def __init__(self, domain, config):
         u, v = domain.u, domain.v
         dmn = self.domain = domain
+        self.config = config
         # - - - - - - - - - - - - -SETUP- - - - - - - - - - - - - - - - - -
         # Mass matrix
         M = ut.assemble_matrix(inner(u, v) * dx)
@@ -75,8 +76,9 @@ class FirstInner:
         # a_conv from init: inner(v, dot(u_ab, nabla_grad(u))) * dx
         A = assemble(a_conv, tensor=A)
         A *= -0.5  # Negative convection on the rhs
-        A.axpy(1.0 / dmn.dt, M, True)  # Add mass, A=-0.5*a_conv+1/dt*M
-        # A.axpy(1.0 / dmn.dt, M, True)  # Add mass, A=-0.5*a_conv+1/dt*M
+        # Add mass, A=-0.5*a_conv+1/dt*M
+        A.axpy(1.0 / self.config["dt"], M, True)
+        # A.axpy(1.0 / self.config["dt"], M, True)  # Add mass, A=-0.5*a_conv+1/dt*M
         # Set up scalar matrix for rhs using the same convection as velocity
         if len(dmn.scalar_components) > 0:
             Ta = dmn.Ta  # = 1/dt * M -.5* u_ab
@@ -104,12 +106,11 @@ class FirstInner:
             dmn.b_tmp[ui].zero()
             dmn.b_tmp[ui].axpy(1.0, dmn.b0[ui] * dmn.f[ui])
             # Add transient, convection and diffusion
-            dmn.b_tmp[ui].axpy(
-                1.0, A * dmn.q_1[ui].vector()
-            )  # =b0 +(1/dt*M-0.5*a_conv-0.5*nu*K )*u
+            # =b0 +(1/dt*M-0.5*a_conv-0.5*nu*K )*u
+            dmn.b_tmp[ui].axpy(1.0, A * dmn.q_1[ui].vector())
         # Reset matrix for lhs
         A *= -1.0
-        A.axpy(2.0 / dmn.dt, M, True)
+        A.axpy(2.0 / self.config["dt"], M, True)
         [bc.apply(A) for bc in dmn.bcs["u0"]]  # TODO: is this correct?
         t0.stop()
         return
@@ -120,6 +121,7 @@ class TentativeVelocityStep:
         # dmn = my_domain
         # config = solver_config
         dmn = self.domain = domain
+        self.config = config
         # slv = self.solver = solver
         # - - - - - - - - - - - - -SETUP- - - - - - - - - - - - - - - - - -
         # Allocate a dictionary of Functions for holding and computing
@@ -174,7 +176,7 @@ class TentativeVelocityStep:
         grad_dp = self.gradp[ui](dmn.dp_)  # grad(p_new - p*)
         # print(grad_dp is self.gradp[ui].vector())
         # u = u* - dt*grad(dp_x); v = v* - dt*grad(dp_y)
-        dmn.q_[ui].vector().axpy(-dmn.dt, grad_dp)
+        dmn.q_[ui].vector().axpy(-self.config["dt"], grad_dp)
         [bc.apply(dmn.q_[ui].vector()) for bc in dmn.bcs[ui]]
         return
 
@@ -183,6 +185,7 @@ class PressureStep:
     def __init__(self, domain, config):
         q, p = domain.q, domain.p
         dmn = self.domain = domain
+        self.config = config
         # - - - - - - - - - - - - -SETUP- - - - - - - - - - - - - - - - - -
         # Allocate Function for holding and computing the
         # velocity divergence on Q
@@ -215,7 +218,7 @@ class PressureStep:
         dmn = self.domain
         self.divu.assemble_rhs()  # Computes div(u_)*q*dx
         dmn.b["p"][:] = self.divu.rhs
-        dmn.b["p"] *= -1.0 / dmn.dt
+        dmn.b["p"] *= -1.0 / self.config["dt"]
         # print(dmn.mesh.num_vertices())  # s
         # print(self.Ap.instance().mat().getSize())
         # print(dmn.q_["u0"].vector().vec().getSize())
@@ -253,6 +256,7 @@ class PressureStep:
 class ScalarSolver:
     def __init__(self, domain, config):
         dmn = self.domain = domain
+        self.config = config
         M = dmn.M  # from FirstInnerIter
         # ... get_solvers:
         if config["use_krylov_solvers"]:
@@ -305,7 +309,7 @@ class ScalarSolver:
         # Reset matrix for lhs - Note scalar matrix does not contain diffusion,
         # because it differs for each component
         Ta *= -1.0  # Ta = -M/dt + .5 a_conv
-        Ta.axpy(2.0 / dmn.dt, M, True)  # Ta = M/dt + .5 a_conv
+        Ta.axpy(2.0 / self.config["dt"], M, True)  # Ta = M/dt + .5 a_conv
         return
 
     def solve(self, ci):

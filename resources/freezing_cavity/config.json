@@ -1,13 +1,58 @@
 {
-"_comment": "leave your comment here",
-"mesh_name": "../resources/freezing_cavity/mesh.xdmf",
-"facet_name": "../resources/freezing_cavity/mf.xdmf",
-"max_iter": 1,
-"plot_interval": 10,
-"save_step": 10,
-"dt": 0.01,
-"debug": false,
+"restart": false,
 "decompose_results": false,
+"debug": false,
+"use_krylov_solvers": true,
+"testing": false,
+"AB_projection_pressure": false,
+"output_timeseries_as_vector": true,
 "print_velocity_pressure_convergence": false,
-"max_error": 1e-6
+"print_intermediate_info": 100,
+"plot_interval": 100,
+"checkpoint": 50,
+"save_step": 10,
+
+"iters_on_first_timestep": 5,
+"max_error": 1e-6,
+"max_iter": 1,
+"max_outer_iter": 10000,
+"killtime": 15000,
+
+"sigma": 1.0,
+"tau": 0.1,
+"t_init": 670,
+"t_m": 660,
+"t_amb": 650,
+"dt": 0.01,
+"T": 10.0,
+"alpha": 9.7e-05,
+"k_r": 0.001,
+
+"krylov_solvers": {
+    "monitor_convergence": false,
+    "report": false,
+    "error_on_nonconvergence": false,
+    "nonzero_initial_guess": true,
+    "maximum_iterations": 200,
+    "relative_tolerance": 1e-08,
+    "absolute_tolerance": 1e-08
+  },
+"velocity_update_solver": {
+    "method": "default",
+    "solver_type": "cg",
+    "preconditioner_type": "jacobi",
+    "low_memory_version": false
+  },
+"velocity_krylov_solver": {
+    "solver_type": "bicgstab",
+    "preconditioner_type": "jacobi"
+  },
+"pressure_krylov_solver": {
+    "solver_type": "gmres",
+    "preconditioner_type": "hypre_amg"
+  },
+"scalar_krylov_solver": {
+    "solver_type": "bicgstab",
+    "preconditioner_type": "jacobi"
+  }
 }

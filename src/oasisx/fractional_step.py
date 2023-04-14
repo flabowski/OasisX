@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 from shutil import copy2
 import matplotlib
 import json
+from os.path import isfile
 
 
 class FractionalStepAlgorithm:
@@ -35,13 +36,22 @@ class FractionalStepAlgorithm:
         # if "frequency" in config.keys():
         #     self.dt = 1.0 / config["frequency"]
 
-        m = int(dmn.T / dmn.dt)
+        m = int(config["T"] / config["dt"])
         self.udiff = np.zeros((m, config["max_iter"]))
         self.pdiff = np.zeros((m, config["max_iter"]))
         self.t_u = np.empty((m,))
         self.t_p = np.empty((m,))
         self.stop = False
+        return
 
+    def check_if_stop(self, total_timer, tstep):
+        time_elapsed = total_timer.elapsed()[0]
+
+        maxiter = tstep == self.config["max_outer_iter"]
+        killtime = time_elapsed > self.config["killtime"]
+        killfile = isfile(self.config["origin"] + "KILL")
+        if maxiter or killtime or killfile:
+            self.stop = True
         return
 
     def run(self):
@@ -63,7 +73,7 @@ class FractionalStepAlgorithm:
             self.config["use_krylov_solvers"]
             and self.config["krylov_solvers"]["monitor_convergence"]
         )
-        t_end = dmn.T - dmn.dt
+        t_end = self.config["T"]
 
         # if use_ROM:
         #     dir_oasis = "/home/florianma@ad.ife.no/ad_disk/Florian/Repositoties/Oasis/"
@@ -90,11 +100,11 @@ class FractionalStepAlgorithm:
         total_inner_iterations = 0
         while (t - df.DOLFIN_EPS) < t_end and not self.stop:
             print(t, self.stop)
-            # if tstep == 30:
-            #     stop = True
+            # if :
+            #     self.stop = True
 
             # t += self.dt  # avoid annoying rounding errors
-            t = np.round(t + dmn.dt, decimals=8)
+            t = np.round(t + self.config["dt"], decimals=8)
             tstep += 1
 
             inner_iter = 0
@@ -209,7 +219,7 @@ class FractionalStepAlgorithm:
             ts.stop()
 
             # Print some information
-            if tstep % dmn.print_intermediate_info == 0:
+            if tstep % self.config["print_intermediate_info"] == 0:
                 toc = tx.stop()
                 dmn.show_info(t, tstep, toc)
                 df.list_timings(df.TimingClear.clear, [df.TimingType.wall])
@@ -222,6 +232,7 @@ class FractionalStepAlgorithm:
                 and not self.stop
             ):
                 dmn.q_["p"].vector().axpy(0.5, dmn.dp_.vector())
+            self.check_if_stop(total_timer, tstep)
 
         total_timer.stop()
         df.list_timings(df.TimingClear.keep, [df.TimingType.wall])

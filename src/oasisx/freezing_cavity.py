@@ -20,6 +20,7 @@ from matplotlib.colors import LogNorm
 import json
 from fractional_step import FractionalStepAlgorithm
 import oasisx.ipcs_abcn as solver
+from oasisx.io import mesh_from_file, load_json
 
 # from __future__ import print_function
 # from dolfin import Expression, DirichletBC, Mesh, XDMFFile, MeshValueCollection
@@ -38,23 +39,24 @@ class FreezingCavity(SegregatedDomain):
     # run for Um in [0.2, 0.5, 0.6, 0.75, 1.0, 1.5, 2.0]
     # or  for Re in [20., 50., 60., 75.0, 100, 150, 200]
 
-    def __init__(self, config):
+    def __init__(self, config, mesh):
         """
         Create the required function spaces, functions and boundary conditions
         for a channel flow problem
         """
         super().__init__()
+        self.config = config
         # Aluminium
         # k = 205  # W/(m K)
         # cp = 0.91 * 1000  # kJ/(kg K) *1000 = J/(kg K)
         # rho = 2350  # kg /m3
         # alpha = k / (cp * rho)  # 132.8 mm**2/s
-        alpha = 97.0 / 1000**2  # k / (cp * rho)  # 97 mm**2/s
-        k_r = 0.001  # wall
-        self.t_m = 660
-        self.sigma = 0.1
-        self.tau = 0.0001
-        t_init = self.t_m + 10
+        # alpha = 97.0 / 1000**2  # k / (cp * rho)  # 97 mm**2/s
+        # k_r = 0.001  # wall
+        # self.t_m = 660
+        # self.sigma = 1
+        # self.tau = 0.1
+        # t_init = self.t_m + 10
         # # water:
         # k = 0.5562  # W/(m K)
         # cp = 4.2  # kJ / (kg K)
@@ -67,18 +69,18 @@ class FreezingCavity(SegregatedDomain):
             "top": 3,
             "left": 4,
         }
-        self.t_init = Constant(t_init)
-        self.t_amb = Constant(650)
+        # self.t_init = Constant(t_init)
+        # self.t_amb = Constant(650)
         # self.t_feeder = Constant(670)
         self.k_top = Constant(0.0)
         self.k_lft = Constant(0.0)
         self.k_btm = Constant(0.0)
-        self.k_rgt = Constant(k_r)
+        self.k_rgt = Constant(config["k_r"])
         self.g = Constant((0.0, -9.81))  # used in body_force()
-        self.dt = 1.0
-        self.T = 10000
+        # self.dt = 1.0
+        # self.T = 10
         self.scalar_components = ["t"]
-        self.D = {"t": Constant(alpha)}
+        self.D = {"t": Constant(config["alpha"])}
 
         self.pkg_dir = inspect.getfile(SegregatedDomain).split("src")[0]
         self.temp_dir = temp_dir = expanduser("~") + "/tmp/"
@@ -94,9 +96,9 @@ class FreezingCavity(SegregatedDomain):
         else:
             mkdir(temp_dir)
 
-        self.set_parameters(config)
-
-        self.mesh_from_file()
+        # self.set_parameters(config)
+        self.mesh, self.mf, self.ds_ = mesh
+        # self.mesh_from_file()
         self.list_problem_components()
         self.declare_components()
         self.initialize_components()
@@ -104,7 +106,7 @@ class FreezingCavity(SegregatedDomain):
         # TODO: LES setup
         # TODO: Non-Newtonian setup.
         self.apply_bcs()
-        if self.restart:
+        if self.config["restart"]:
             self.load()
             self.update_coefficients()
         # self.advance()
@@ -169,10 +171,11 @@ class FreezingCavity(SegregatedDomain):
 
     def initialize_components(self):
         print("initialize_components")
+        t_init = self.config["t_init"]
         self.t_ = self.q_["t"]
         self.t_1 = self.q_1["t"]
-        self.t_.vector().vec().array[:] = self.t_init
-        self.t_1.vector().vec().array[:] = self.t_init
+        self.t_.vector().vec().array[:] = t_init
+        self.t_1.vector().vec().array[:] = t_init
 
         for ui in self.u_components:
             self.q_[ui].vector().vec().array[:] = 0.0
@@ -180,8 +183,8 @@ class FreezingCavity(SegregatedDomain):
             self.q_2[ui].vector().vec().array[:] = 0.0
 
         x, y = self.VV["u0"].tabulate_dof_coordinates().T
-        self.q_["t"].vector().vec().array = self.t_init.values()  # - x * .5
-        self.q_1["t"].vector().vec().array = self.t_init.values()  # - x * .5
+        self.q_["t"].vector().vec().array = t_init  # - x * .5
+        self.q_1["t"].vector().vec().array = t_init  # - x * .5
         self.f = {"u0": None, "u1": None}
         # if not self.f:
         #     mesh = self.mesh
@@ -217,12 +220,9 @@ class FreezingCavity(SegregatedDomain):
 
         lft, rgt = bc_dict["left"], bc_dict["right"]
         top, btm = bc_dict["top"], bc_dict["bottom"]
-        v, ds_, t = (
-            self.v,
-            self.ds_,
-            self.u,
-        )  # we use the same trial function as
-        t1, t_amb = self.q_1["t"], self.t_amb
+        # we use the same trial function as
+        v, ds_, t = (self.v, self.ds_, self.u)
+        t1, t_amb = self.q_1["t"], self.config["t_amb"]
         # ... = ... - k (t-t_amb) * v * ds; with t = (t^n+t^{n-1})/2
         # t^n * (k*v*ds) = - t^{n-1} * (k*v*ds) + t_amb * (k*v*ds)
         self.bt_lhs = 1.0 * assemble(  # 0.5 for C-N.
@@ -292,8 +292,8 @@ class FreezingCavity(SegregatedDomain):
         rho_0 = self.rho.vector().vec().array.mean()
         nu_updated = mu_updated / rho_0
         self.set_nu(nu_updated)
-        T_m = self.t_m
-        s = self.sigma
+        T_m = self.config["t_m"]
+        s = self.config["sigma"]
         self.phi_l.vector().vec().array = (
             1 / 2 * (1 + erf((T - T_m) / (s * 2**0.5)))
         )
@@ -359,19 +359,20 @@ class FreezingCavity(SegregatedDomain):
         u = (u0**2 + u1**2) ** 0.5
         # L = 1
         # Re = u * L / nu
-        C = u * self.dt / mesh.hmax()
+        dt = self.config["dt"]
+        C = u * dt / mesh.hmax()
         CFL = C.max()
-        print(tstep, "CFL, dt", CFL, self.dt)
+        print(tstep, "CFL, dt", CFL, dt)
         if CFL > 0.1:
-            self.dt *= 0.8
+            self.config["dt"] *= 0.8
             print("decreasing dt")
         elif CFL < 0.05:
-            self.dt /= 0.8
+            self.config["dt"] /= 0.8
             print("increasing dt")
 
         if (
-            (tstep % self.plot_interval) == 0
-            or (t + 1e-6) > self.T
+            (tstep % self.config["plot_interval"]) == 0
+            or (t + 1e-6) > self.config["T"]
             or (tstep < 3)
             or CFL > 0.5
         ):
@@ -381,7 +382,7 @@ class FreezingCavity(SegregatedDomain):
             plt.savefig(pth + "frame_{:06d}.png".format(tstep), dpi=300)
             plt.close()
 
-        if (tstep % self.save_step) == 0:
+        if (tstep % self.config["save_step"]) == 0:
             # u = self.q_["u0"].compute_vertex_values(mesh)  # 2805
             u = self.q_["u0"].vector().vec().array  # 10942
             v = self.q_["u1"].vector().vec().array
@@ -406,7 +407,7 @@ class FreezingCavity(SegregatedDomain):
             self.stop = True
             print("ALL_SOLIDIFIED")
 
-        if tstep == 1000:
+        if ((tstep % self.config["checkpoint"]) == 0) and (tstep != 0):
             print(tstep, "saving")
             self.save()
             # asd
@@ -438,16 +439,12 @@ class FreezingCavity(SegregatedDomain):
         np.save(pth + "mesh_cells.npy", V.mesh().cells())
         t = np.arange(0.0, self.T, self.dt) + self.dt
         np.save(pth + "time.npy", t)
-        # np.save(pth + "nu.npy", np.array([self.nu]))
-        # np.save(pth + "Re.py", np.array([self.Re]))
-        mesh_dir = dirname(self.mesh_name) + "/"
-        mesh_name = self.mesh_name.split("/")[-1].replace(".xdmf", "")
-        copy2(mesh_dir + mesh_name + ".xdmf", pth + mesh_name + ".xdmf")
-        copy2(mesh_dir + mesh_name + ".h5", pth + mesh_name + ".h5")
-        facet_dir = dirname(self.facet_name) + "/"
-        facet_name = self.facet_name.split("/")[-1].replace(".xdmf", "")
-        copy2(facet_dir + facet_name + ".xdmf", pth + facet_name + ".xdmf")
-        copy2(facet_dir + facet_name + ".h5", pth + facet_name + ".h5")
+
+        origin = "/".join(self.config["origin"].split("/")[:-1])
+        copy2(origin + "mesh.xdmf", pth + "mesh.xdmf")
+        copy2(origin + "mesh.h5", pth + "mesh.h5")
+        copy2(origin + "mf.xdmf", pth + "mf.xdmf")
+        copy2(origin + "mf.h5", pth + "mf.h5")
 
         if hasattr(self, "udiff"):
             np.save(pth + "udiff.npy", self.udiff)
@@ -601,31 +598,28 @@ class FreezingCavity(SegregatedDomain):
 if __name__ == "__main__":
     pkg_dir = inspect.getfile(SegregatedDomain).split("src")[0]
     path_to_config = pkg_dir + "/resources/freezing_cavity/"
-    path_to_config = pkg_dir + "/checkpoints/20230331_171543/"
-    config_file = path_to_config + "config.json"
-    print(config_file)
-    with open(file=config_file, encoding="utf-8") as infile:
-        domain_config = json.load(infile)
-    # commandline_args = parse_command_line()
-    with open("./solver_defaults.json", "r") as infile:
-        solver_config = json.load(infile)
-    my_domain = FreezingCavity(domain_config)
-    # my_domain.set_parameters(commandline_args)
-    # my_domain.mesh_from_file()
-    print("restart", my_domain.restart)
+    # path_to_config = pkg_dir + "/checkpoints/20230331_171543/"
+    # path_to_config = pkg_dir + "/checkpoints/20230414_171529/"
 
-    fit = solver.FirstInner(my_domain)
-    tvs = solver.TentativeVelocityStep(my_domain, solver_config)
-    prs = solver.PressureStep(my_domain, solver_config)
+    print(path_to_config)
+    domain_config = load_json(path_to_config + "config.json")
+    # solver_config = load_json("./solver_defaults.json")
+    mesh = mesh_from_file(path_to_config)
+    my_domain = FreezingCavity(domain_config, mesh)
+    # my_domain.set_parameters(commandline_args)
+
+    fit = solver.FirstInner(my_domain, domain_config)
+    tvs = solver.TentativeVelocityStep(my_domain, domain_config)
+    prs = solver.PressureStep(my_domain, domain_config)
     for ci in my_domain.scalar_components:
-        scs = solver.ScalarSolver(my_domain, solver_config)
+        scs = solver.ScalarSolver(my_domain, domain_config)
 
     algorithm = FractionalStepAlgorithm(
-        my_domain, fit, tvs, prs, scs, solver_config
+        my_domain, fit, tvs, prs, scs, domain_config
     )
-    # if my_domain.restart:
 
     my_domain.plot()
     algorithm.run()
-    pth = pkg_dir + "results/" + my_domain.simulation_start + "/"
-    copy2(config_file, pth + config_file.split("/")[-1])
+
+    # pth = pkg_dir + "results/" + my_domain.simulation_start + "/"
+    # copy2(path_to_config + "config.json", pth + "config.json")

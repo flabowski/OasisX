@@ -1,0 +1,15 @@
+{
+"_comment": "leave your comment here",
+"mesh_name": "./mesh.xdmf",
+"facet_name": "./mf.xdmf",
+"restart": true,
+"sigma": 1.0,
+"tau": 0.1,
+"t_init": 670,
+"t_m": 660,
+"t_amb": 650,
+"dt": 1.0,
+"T": 10.0,
+"alpha": 9.7e-05,
+"k_r": 0.001
+}
