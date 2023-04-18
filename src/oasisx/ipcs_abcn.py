@@ -92,12 +92,13 @@ class FirstInner:
             K_scaled.axpy(1.0, K, True)
             K_scaled.instance().mat().diagonalScale(dmn.nu.vector().vec())
             A.axpy(-0.5, K_scaled, True)
-            # lets re-use K_scaled to add velocity penalization
-            # K_scaled.zero()
-            # K_scaled.axpy(1.0, M, True)
-            # Phi_s = (1 - dmn.phi_l.vector().vec()) / dmn.tau
-            # K_scaled.instance().mat().diagonalScale(Phi_s)
-            # A.axpy(0.5, K_scaled, True)
+
+            # re-use K_scaled to add velocity penalization
+            K_scaled.zero()
+            K_scaled.axpy(1.0, M, True)
+            Phi_s = 1 - dmn.phi_l.vector().vec()
+            K_scaled.instance().mat().diagonalScale(-Phi_s / dmn.config["tau"])
+            A.axpy(0.5, K_scaled, True)
         else:
             A.axpy(-0.5 * dmn.nu, K, True)
         for i, ui in enumerate(dmn.u_components):

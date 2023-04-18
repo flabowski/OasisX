@@ -8,7 +8,7 @@ Created on Mon Aug 22 15:52:29 2022
 import dolfin as df
 from oasisx.logging import info_green, info_red
 from oasisx.io import parse_command_line
-from os.path import isfile, join, dirname, exists, expanduser, abspath
+from os.path import isfile, join, dirname, exists, expanduser, abspath, isdir
 from os import mkdir
 import numpy as np
 from shutil import copy2
@@ -65,11 +65,12 @@ class Domain:
         for key, val in self.q_2.items():
             val.vector().vec().array = np.load(pth + "q_2" + key + ".npy")
 
-    def save(self):
+    def save(self, tstep):
         print("saving...")
-        pth = self.pkg_dir + "checkpoints/" + self.simulation_start + "/"
+        pth = self.temp_dir + "checkpoint_{:.0f}/".format(tstep)
         print(pth)
-        mkdir(pth)
+        if not isdir(pth):
+            mkdir(pth)
         for key, val in self.q_.items():
             ary = val.vector().vec().array
             np.save(pth + "q_" + key + ".npy", ary)
@@ -88,10 +89,10 @@ class Domain:
         params = self.config
         params["restart"] = True
         with open(pth + "config.json", "x") as outfile:
-            json.dump(params, outfile, indent=2)
+            json.dump(params, outfile, indent=4)
 
     def show_info(self, t, tstep, toc):
         msg = "Time = {0:2.4e}, timestep = {1:6d}, End time = {2:2.4e}"
-        info_green(msg.format(t, tstep, self.T))
+        info_green(msg.format(t, tstep, self.config["T"]))
         msg = "Total computing time on previous {0:d} timesteps = {1:f}"
-        info_red(msg.format(self.print_intermediate_info, toc))
+        info_red(msg.format(self.config["print_intermediate_info"], toc))

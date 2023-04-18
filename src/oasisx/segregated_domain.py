@@ -47,9 +47,9 @@ class Scheme(Enum):
 class SegregatedDomain(Domain):
     def __init__(self):
         # super.__init__()
-        self.constrained_domain = None
-        self.velocity_degree = 2
-        self.pressure_degree = 2
+        # self.constrained_domain = None
+        # self.velocity_degree = 2
+        # self.pressure_degree = 1
         # TODO: move to solver interface.
         # solver specific things should not be here.
         # why not initiate solvers directly?
@@ -83,10 +83,11 @@ class SegregatedDomain(Domain):
         return
 
     def declare_components(self):
-        cd = self.constrained_domain
+        cd = self.config["constrained_domain"]
         mesh = self.mesh
         sys_comp = self.sys_comp
-        deg_v, deg_p = self.velocity_degree, self.pressure_degree
+        deg_v = self.config["velocity_degree"]
+        deg_p = self.config["pressure_degree"]
         V = Q = df.FunctionSpace(mesh, "CG", deg_v, constrained_domain=cd)
         if deg_v != deg_p:
             Q = df.FunctionSpace(mesh, "CG", deg_p, constrained_domain=cd)

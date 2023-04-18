@@ -9,15 +9,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.interpolate import interp1d
 from scipy.special import erf
-from os import listdir, remove, mkdir, fsdecode  # , rename
-from os.path import isfile, join, dirname, exists, expanduser
+from os import listdir, remove, mkdir  # , fsdecode , rename
+from shutil import rmtree
+from os.path import isfile, join, exists, expanduser  # , dirname
 from datetime import datetime
 from shutil import copy2
 import inspect
 from oasisx.segregated_domain import SegregatedDomain
 from dolfin import Constant, DirichletBC, assemble, Function
 from matplotlib.colors import LogNorm
-import json
 from fractional_step import FractionalStepAlgorithm
 import oasisx.ipcs_abcn as solver
 from oasisx.io import mesh_from_file, load_json
@@ -83,19 +83,22 @@ class FreezingCavity(SegregatedDomain):
         self.D = {"t": Constant(config["alpha"])}
 
         self.pkg_dir = inspect.getfile(SegregatedDomain).split("src")[0]
+        self.results_folder = self.pkg_dir + "results/"
         self.temp_dir = temp_dir = expanduser("~") + "/tmp/"
         msg = "is not empty. Do you want to remove all its content? [y/n]:"
         if exists(temp_dir):
             if len(listdir(temp_dir)) > 0:
                 if input(temp_dir + msg) == "y":
-                    for file in listdir(temp_dir):
-                        filename = fsdecode(file)
-                        remove(temp_dir + filename)
+                    rmtree(temp_dir)
+                    mkdir(temp_dir)
+                    # for file in listdir(temp_dir):
+                    #     filename = fsdecode(file)
+                    #     remove(temp_dir + filename)
                 else:
                     raise ValueError(temp_dir + "needs to be empty")
         else:
             mkdir(temp_dir)
-
+        self.timestamps = np.array([0.0])
         # self.set_parameters(config)
         self.mesh, self.mf, self.ds_ = mesh
         # self.mesh_from_file()
@@ -112,7 +115,6 @@ class FreezingCavity(SegregatedDomain):
         # self.advance()
         self.simulation_start = datetime.now().strftime("%Y%m%d_%H%M%S")
         self.temporal_hook(0.0, 0, None)  # plots initial condition
-        # asd
         return
 
     # def stokes(self):
@@ -200,6 +202,8 @@ class FreezingCavity(SegregatedDomain):
         # rho is incorporated in the pressure
         self.q_["p"].vector().vec().array[:] = -g_z / rho_0
         self.q_1["p"].vector().vec().array[:] = -g_z / rho_0
+        for key, val in self.q_.items():
+            print(key, val.vector().vec().array.shape)
         # self.stokes()
         self.advance()
         # self.stokes()
@@ -308,6 +312,8 @@ class FreezingCavity(SegregatedDomain):
         # and thus needs to be handled explicitly here.
         super().advance()
         self.update_coefficients()
+        t_next = self.timestamps[-1] + self.config["dt"]
+        self.timestamps = np.append(self.timestamps, [t_next])
         return
 
     def get_rho(self):
@@ -369,7 +375,6 @@ class FreezingCavity(SegregatedDomain):
         elif CFL < 0.05:
             self.config["dt"] /= 0.8
             print("increasing dt")
-
         if (
             (tstep % self.config["plot_interval"]) == 0
             or (t + 1e-6) > self.config["T"]
@@ -409,7 +414,7 @@ class FreezingCavity(SegregatedDomain):
 
         if ((tstep % self.config["checkpoint"]) == 0) and (tstep != 0):
             print(tstep, "saving")
-            self.save()
+            self.save(tstep)
             # asd
         return
 
@@ -424,9 +429,7 @@ class FreezingCavity(SegregatedDomain):
         plt.savefig(tmp_pth + "frame_9999.png", dpi=300)
         plt.close()
         print("post processing:")
-        pth = "/".join(
-            [self.pkg_dir, self.results_folder, self.simulation_start, ""]
-        )
+        pth = "/".join([self.pkg_dir, "results", self.simulation_start, ""])
         print("moving results to", pth)
         mkdir(pth)
         # save meshes as well as some other data
@@ -437,10 +440,10 @@ class FreezingCavity(SegregatedDomain):
         np.save(pth + "Q_dof_coords.npy", Q.tabulate_dof_coordinates())
         np.save(pth + "mesh_coords.npy", V.mesh().coordinates())
         np.save(pth + "mesh_cells.npy", V.mesh().cells())
-        t = np.arange(0.0, self.T, self.dt) + self.dt
-        np.save(pth + "time.npy", t)
+        # t = np.arange(0.0, self.config["T"], self.config["dt"]) + self.config["dt"]
+        np.save(pth + "time.npy", self.timestamps)
 
-        origin = "/".join(self.config["origin"].split("/")[:-1])
+        origin = "/".join(self.config["origin"].split("/")[:-1]) + "/"
         copy2(origin + "mesh.xdmf", pth + "mesh.xdmf")
         copy2(origin + "mesh.h5", pth + "mesh.h5")
         copy2(origin + "mf.xdmf", pth + "mf.xdmf")
@@ -492,7 +495,13 @@ class FreezingCavity(SegregatedDomain):
                 remove(tmp_pth + f)
         if SVD:
             self.plot_decay()
-        print("found", len(t), "timesteps and", len(onlyfiles), "saved files")
+        print(
+            "found",
+            len(self.timestamps),
+            "timesteps and",
+            len(onlyfiles),
+            "saved files",
+        )
         return
 
     def plot_decay(self):
@@ -546,6 +555,7 @@ class FreezingCavity(SegregatedDomain):
         rho = self.rho.compute_vertex_values(mesh).copy()
         # mu = self.mu.compute_vertex_values(mesh).copy()
         nu = self.nu.compute_vertex_values(mesh).copy()
+        phi_l = self.phi_l.compute_vertex_values(mesh)
         # p = p_ * rho
         # nu[nu>0.8] = 0.8
         # print(u.shape, v.shape, p.shape)
@@ -574,7 +584,7 @@ class FreezingCavity(SegregatedDomain):
         )
         c2 = ax2.tricontourf(x, y, tri, nu, levels=40, norm=LogNorm())
         c3 = ax3.tricontourf(x, y, tri, t, levels=40)
-        c4 = ax4.tricontourf(x, y, tri, rho, levels=40)
+        c4 = ax4.tricontourf(x, y, tri, phi_l, levels=40)
         # ax4.plot(t, nu, "b.")
         # print(p.min(), p.max())
         ax1.set_aspect("equal")
@@ -585,7 +595,7 @@ class FreezingCavity(SegregatedDomain):
         ax2.set_title("pressure")
         ax2.set_title("viscosity")
         ax3.set_title("temperature")
-        ax4.set_title("density")
+        ax4.set_title("phi_l")
         plt.colorbar(c1, ax=ax1)
         plt.colorbar(c2, ax=ax2)
         t_bar = plt.colorbar(c3, ax=ax3)
@@ -598,7 +608,7 @@ class FreezingCavity(SegregatedDomain):
 if __name__ == "__main__":
     pkg_dir = inspect.getfile(SegregatedDomain).split("src")[0]
     path_to_config = pkg_dir + "/resources/freezing_cavity/"
-    # path_to_config = pkg_dir + "/checkpoints/20230331_171543/"
+    path_to_config = pkg_dir + "/checkpoints/20230331_171543/"
     # path_to_config = pkg_dir + "/checkpoints/20230414_171529/"
 
     print(path_to_config)
