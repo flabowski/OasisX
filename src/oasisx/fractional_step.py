@@ -36,11 +36,12 @@ class FractionalStepAlgorithm:
         # if "frequency" in config.keys():
         #     self.dt = 1.0 / config["frequency"]
 
-        m = int(config["T"] / config["dt"])
-        self.udiff = np.zeros((m, config["max_iter"]))
-        self.pdiff = np.zeros((m, config["max_iter"]))
-        self.t_u = np.empty((m,))
-        self.t_p = np.empty((m,))
+        # TODO: adjust for chaning dt. only keep when debugging
+        # m = int(config["T"] / config["dt"])
+        # self.udiff = np.zeros((m, config["max_iter"]))
+        # self.pdiff = np.zeros((m, config["max_iter"]))
+        # self.t_u = np.empty((m,))
+        # self.t_p = np.empty((m,))
         self.stop = False
         return
 
@@ -201,10 +202,12 @@ class FractionalStepAlgorithm:
                     t3 = OasisTimer(
                         "Solving scalar {}".format(ci)
                     )  # print_solve_info
-                    scs.assemble()
-                    for ci in dmn.scalar_components:
-                        scs.solve(ci)
-                        dmn.scalar_hook()
+                    for k in range(1):
+                        # piccard iteration
+                        scs.assemble()
+                        scs.solve(ci, k)
+                        dmn.update_liquid_solid_fraction()
+                    dmn.scalar_hook()
                     t3.stop()
 
             t4 = OasisTimer("temporal hook")

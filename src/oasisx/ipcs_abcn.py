@@ -273,7 +273,8 @@ class ScalarSolver:
         # ... setup:
         # Allocate coefficient matrix and work vectors for scalars.
         # Matrix differs from velocity in boundary conditions only
-        dmn.Ta = Matrix(M)
+        dmn.Ta = Matrix(M)  # just to declare it. fit.assemble sets it to
+        # Ta = 1/dt * M -.5* u_ab
         if len(dmn.scalar_components) > 1:
             # For more than one scalar we use the same linear algebra
             # solver for all.
@@ -294,13 +295,15 @@ class ScalarSolver:
         M = dmn.M  # mass matrix from FirstInnerIter
         K = dmn.K  # stiffness matrix from FirstInnerIter
         Ta = dmn.Ta  # intermediate A from FirstInnerIter
+        # if k == 0:
+        #     dmn.phi_l.assign(dmn.phi_l_1)  #
+
         # Compute rhs for all scalars
         for ci in dmn.scalar_components:
             # Ta = M/dt + .5 a_conv
             # Add diffusion
-            Ta.axpy(
-                -0.5 * dmn.D[ci], K, True
-            )  # Ta =  M/dt - .5 a_conv -0.5*D*K
+            Ta.axpy(-0.5 * dmn.D[ci], K, True)
+            # Ta =  M/dt - .5 a_conv  -0.5*D*K
             # Compute rhs: b = t_1 * (M/dt - .5 a_conv -0.5*D*K)
             dmn.b[ci].zero()
             dmn.b[ci].axpy(1.0, Ta * dmn.q_1[ci].vector())
@@ -313,7 +316,7 @@ class ScalarSolver:
         Ta.axpy(2.0 / self.config["dt"], M, True)  # Ta = M/dt + .5 a_conv
         return
 
-    def solve(self, ci):
+    def solve(self, ci, k):
         """Solve scalar equation."""
         dmn = self.domain
         K = dmn.K  # stiffness matrix from FirstInnerIter
@@ -338,10 +341,18 @@ class ScalarSolver:
             dmn.q_[ci].vector().axpy(1.0, bx)
 
         else:
+            ddH = dmn.phi_l_1.vector() - dmn.phi_l.vector()
+            ddH = ddH / self.config["dt"]
+            S = ddH / self.config["c_p"]
+            print(k, S.vec().array.min(), S.vec().array.max())
+            # mesh = dmn.mesh
+            # phi_l = dmn.phi_l.compute_vertex_values(mesh)
+
             [bc.apply(Ta, dmn.b[ci]) for bc in dmn.bcs[ci]]
             A = Ta + dmn.bt_lhs
-            b = dmn.b[ci] + dmn.bt_rhs
-            self.c_sol.solve(A, dmn.q_[ci].vector(), b)
+            b = dmn.b[ci] + dmn.bt_rhs  # + S
+            res = self.c_sol.solve(A, dmn.q_[ci].vector(), b)
+            print("scalar solver finished with ", res)
 
         if len(dmn.scalar_components) > 1:
             Ta.axpy(-0.5 * dmn.D[ci], K, True)  # Subtract diffusion

@@ -21,6 +21,7 @@ from matplotlib.colors import LogNorm
 from fractional_step import FractionalStepAlgorithm
 import oasisx.ipcs_abcn as solver
 from oasisx.io import mesh_from_file, load_json
+import json
 
 # from __future__ import print_function
 # from dolfin import Expression, DirichletBC, Mesh, XDMFFile, MeshValueCollection
@@ -72,9 +73,9 @@ class FreezingCavity(SegregatedDomain):
         # self.t_init = Constant(t_init)
         # self.t_amb = Constant(650)
         # self.t_feeder = Constant(670)
-        self.k_top = Constant(0.0)
-        self.k_lft = Constant(0.0)
-        self.k_btm = Constant(0.0)
+        self.k_top = Constant(config["k_t"])
+        self.k_lft = Constant(config["k_l"])
+        self.k_btm = Constant(config["k_b"])
         self.k_rgt = Constant(config["k_r"])
         self.g = Constant((0.0, -9.81))  # used in body_force()
         # self.dt = 1.0
@@ -88,14 +89,14 @@ class FreezingCavity(SegregatedDomain):
         msg = "is not empty. Do you want to remove all its content? [y/n]:"
         if exists(temp_dir):
             if len(listdir(temp_dir)) > 0:
-                if input(temp_dir + msg) == "y":
-                    rmtree(temp_dir)
-                    mkdir(temp_dir)
-                    # for file in listdir(temp_dir):
-                    #     filename = fsdecode(file)
-                    #     remove(temp_dir + filename)
-                else:
-                    raise ValueError(temp_dir + "needs to be empty")
+                # if input(temp_dir + msg) == "y":
+                rmtree(temp_dir)
+                mkdir(temp_dir)
+                # for file in listdir(temp_dir):
+                #     filename = fsdecode(file)
+                #     remove(temp_dir + filename)
+            # else:
+            #     raise ValueError(temp_dir + "needs to be empty")
         else:
             mkdir(temp_dir)
         self.timestamps = np.array([0.0])
@@ -168,16 +169,19 @@ class FreezingCavity(SegregatedDomain):
     def declare_coefficients(self):
         V = self.VV["t"]
         self.mu, self.nu, self.rho = Function(V), Function(V), Function(V)
+        # self.fl_ = Function(V)
+        # self.fl_1 = Function(V)
         self.phi_l = Function(V)
+        # self.phi_l_k = Function(V)
+        self.phi_l_1 = Function(V)
         return
 
     def initialize_components(self):
         print("initialize_components")
         t_init = self.config["t_init"]
-        self.t_ = self.q_["t"]
-        self.t_1 = self.q_1["t"]
-        self.t_.vector().vec().array[:] = t_init
-        self.t_1.vector().vec().array[:] = t_init
+        self.q_["t"].vector().vec().array[:] = t_init
+        self.q_1["t"].vector().vec().array[:] = t_init
+        # self.fl_1.vector().vec().array[:] = 1.0
 
         for ui in self.u_components:
             self.q_[ui].vector().vec().array[:] = 0.0
@@ -254,9 +258,10 @@ class FreezingCavity(SegregatedDomain):
         return
 
     def mu_(self, T):
-        mu_l = 1.3 / 1000.0  # in Pa*s
+        mu_l = self.config["mu_l"]  #  Al: 1.3 / 1000.0  # in Pa*s
         # Water at 20°C: 1 mPa s = 1/1000 Pa s
-        mu = np.array([(T - 660) ** 2 * 1000000.0]).ravel() + mu_l  # mushy z.
+        # mu = np.array([(T - 660) ** 2 * 1000000.0]).ravel() + mu_l  # mushy z.
+        mu = np.empty_like(T)
         mu[T >= 660] = mu_l
         mu[T < 660] = 1e6  # no mushy zone
         # mu_liquidus = 1.787 / 1000.
@@ -279,28 +284,62 @@ class FreezingCavity(SegregatedDomain):
         #                     2232.1, 2221.2, 2210.4, 2199.5, 2188.6, 2177.8])
         # t = np.array([0.00, 660, 700])
         # r = np.array([2368, 2368, 2357])
-        t = [500.0, 600.00, 660.0, 700.0, 750.0, 800.0, 850.0, 900.0]
-        # r = [2412, 2384.5, 2368, 2357, 2345, 2332, 2319, 2304]  # w m. zone
-        r = [2368, 2368.0, 2368, 2357, 2345, 2332, 2319, 2304]  # no mushy zone
+        # t = [500.0, 600.00, 660.0, 700.0, 750.0, 800.0, 850.0, 900.0]
+        # # r = [2412, 2384.5, 2368, 2357, 2345, 2332, 2319, 2304]  # w m. zone
+        # r = [2368, 2368.0, 2368, 2357, 2345, 2332, 2319, 2304]  # no mushy zone
+        t = self.config["rho"]["t"]
+        r = self.config["rho"]["r"]
         f_rho = interp1d(
             t, r, kind="linear", bounds_error=False, fill_value="extrapolate"
         )
         return f_rho(T)  # kg/m3
 
+    def update_liquid_solid_fraction(self):
+        #        T_ = self.get_t()
+        # fl_1 = self.fl_1.vector().vec().array
+        T_ = self.q_["t"].vector().vec().array
+        s = self.config["sigma"]
+        T_m = self.config["t_m"]
+        phi = 1 / 2 * (1 + erf((T_ - T_m) / (s * 2**0.5)))
+        # print(s)
+        # asd
+        # self.fl_.vector().vec().array = fl_
+        self.phi_l.vector().vec().array = phi
+        return
+
     def update_coefficients(self):
-        T = self.get_t()
-        mu_updated = self.mu_(T)
+        # updates all coefficients that are NOT treated as unknowns in the PDEs
+        # but that can be calculated from these. Namely:
+        # mu(T), nu(T), rho(T), phi_l(T)
+        # the temperature is corrected explicitly to account for the phase change
+        T_ = self.get_t()
+        self.update_liquid_solid_fraction()
+        # T_m = self.config["t_m"]
+        # s = self.config["sigma"]
+        # L = self.config["L"]
+        # c_p = self.config["c_p"]
+
+        # temp_ and fl_ are unknown
+        # fl_1 = self.fl_1.vector().vec().array[:]
+        # dH1 = L * fl_1
+        # dH_ = dH1 + c_p * (T_ - T_m)
+        # fl_ = dH_ / L
+        # fl_[fl_ < 0.0] = 0.0
+        # fl_[fl_ > 1.0] = 1.0
+        # is_mushy = (0.0 < fl_) & (fl_ < 1.0)
+        # T_[is_mushy] = T_m  # or some linear function
+        # self.set_t(T_)
+        # phi_l_ = 1 / 2 * (1 + erf((T_ - T_m) / (s * 2**0.5)))
+        # self.fl_.vector().vec().array = fl_
+        # self.phi_l.vector().vec().array = phi_l_
+
+        mu_updated = self.mu_(T_)
         self.set_mu(mu_updated)
-        rho_updated = self.rho_(T)
+        rho_updated = self.rho_(T_)
         self.set_rho(rho_updated)
         rho_0 = self.rho.vector().vec().array.mean()
         nu_updated = mu_updated / rho_0
         self.set_nu(nu_updated)
-        T_m = self.config["t_m"]
-        s = self.config["sigma"]
-        self.phi_l.vector().vec().array = (
-            1 / 2 * (1 + erf((T - T_m) / (s * 2**0.5)))
-        )
         self.f["u0"] = self.rho.vector() / rho_0 * self.g.values()[0]
         self.f["u1"] = self.rho.vector() / rho_0 * self.g.values()[1]
         return
@@ -310,8 +349,10 @@ class FreezingCavity(SegregatedDomain):
         # But we want to solve the scalar equation only once for t
         # Therfore, nu is not listed in scalar_components
         # and thus needs to be handled explicitly here.
-        super().advance()
         self.update_coefficients()
+        # self.fl_1.assign(self.fl_)
+        self.phi_l_1.assign(self.phi_l)
+        super().advance()
         t_next = self.timestamps[-1] + self.config["dt"]
         self.timestamps = np.append(self.timestamps, [t_next])
         return
@@ -335,10 +376,13 @@ class FreezingCavity(SegregatedDomain):
         self.nu.vector().vec().array[:] = nu
 
     def get_t(self):
-        return self.t_.vector().vec().array
+        return self.q_["t"].vector().vec().array
 
     def set_t(self, t):
-        self.t_.vector().vec().array[:] = t
+        self.q_["t"].vector().vec().array[:] = t
+
+    def get_t1(self):
+        return self.t_1.vector().vec().array
 
     # def update_bcs(self, t):
     #     """
@@ -356,6 +400,7 @@ class FreezingCavity(SegregatedDomain):
         pass
 
     def temporal_hook(self, t, tstep, ps, **kvargs):
+        self.update_coefficients()
         # i = tstep - 1
         pth = self.temp_dir
         mesh = self.mesh
@@ -387,6 +432,13 @@ class FreezingCavity(SegregatedDomain):
             plt.savefig(pth + "frame_{:06d}.png".format(tstep), dpi=300)
             plt.close()
 
+            # fig, ax = plt.subplots()
+            # T = self.q_["t"].compute_vertex_values(mesh)
+            # pl = self.phi_l.compute_vertex_values(mesh)
+            # ax.plot(T, pl, "r.")
+            # plt.savefig(pth + "Tframe_{:06d}.png".format(tstep), dpi=300)
+            # plt.close()
+
         if (tstep % self.config["save_step"]) == 0:
             # u = self.q_["u0"].compute_vertex_values(mesh)  # 2805
             u = self.q_["u0"].vector().vec().array  # 10942
@@ -408,7 +460,7 @@ class FreezingCavity(SegregatedDomain):
             #     np.save(pth + "gradpx_{:06d}.npy".format(i), gradpx)
             #     np.save(pth + "gradpy_{:06d}.npy".format(i), gradpy)
         # check if everything is solid
-        if np.all(self.mu.vector().vec().array > 1e10):
+        if np.all(self.phi_l.vector().vec().array < 1e-10):
             self.stop = True
             print("ALL_SOLIDIFIED")
 
@@ -448,6 +500,11 @@ class FreezingCavity(SegregatedDomain):
         copy2(origin + "mesh.h5", pth + "mesh.h5")
         copy2(origin + "mf.xdmf", pth + "mf.xdmf")
         copy2(origin + "mf.h5", pth + "mf.h5")
+
+        params = self.config
+        params["restart"] = True
+        with open(pth + "config.json", "x") as outfile:
+            json.dump(params, outfile, indent=4)
 
         if hasattr(self, "udiff"):
             np.save(pth + "udiff.npy", self.udiff)
@@ -582,9 +639,13 @@ class FreezingCavity(SegregatedDomain):
         c1 = ax1.quiver(
             x, y, u, v, magnitude, scale=1.0, angles="xy", scale_units="xy"
         )
-        c2 = ax2.tricontourf(x, y, tri, nu, levels=40, norm=LogNorm())
+        c2 = ax2.tricontourf(x, y, tri, nu, levels=40)  # norm=LogNorm()
         c3 = ax3.tricontourf(x, y, tri, t, levels=40)
         c4 = ax4.tricontourf(x, y, tri, phi_l, levels=40)
+        cs = ax3.tricontourf(x, y, tri, t, levels=[660 - 1e-6, 660 + 1e-6])
+        for c in cs.collections:
+            c.set_linestyle("dashed")
+            c.set_color("red")
         # ax4.plot(t, nu, "b.")
         # print(p.min(), p.max())
         ax1.set_aspect("equal")
@@ -599,7 +660,9 @@ class FreezingCavity(SegregatedDomain):
         plt.colorbar(c1, ax=ax1)
         plt.colorbar(c2, ax=ax2)
         t_bar = plt.colorbar(c3, ax=ax3)
-        plt.colorbar(c4, ax=ax4)
+        t_bar.formatter.set_useOffset(False)
+        t_bar.update_ticks()
+        t_bar = plt.colorbar(c4, ax=ax4)
         t_bar.formatter.set_useOffset(False)
         t_bar.update_ticks()
         return fig, (ax1, ax2, ax3)
@@ -608,28 +671,42 @@ class FreezingCavity(SegregatedDomain):
 if __name__ == "__main__":
     pkg_dir = inspect.getfile(SegregatedDomain).split("src")[0]
     path_to_config = pkg_dir + "/resources/freezing_cavity/"
-    path_to_config = pkg_dir + "/checkpoints/20230331_171543/"
+    path_to_config = pkg_dir + "/resources/aluminum_reference/"
     # path_to_config = pkg_dir + "/checkpoints/20230414_171529/"
 
     print(path_to_config)
     domain_config = load_json(path_to_config + "config.json")
     # solver_config = load_json("./solver_defaults.json")
     mesh = mesh_from_file(path_to_config)
-    my_domain = FreezingCavity(domain_config, mesh)
-    # my_domain.set_parameters(commandline_args)
+    for sigma in [
+        0.002,
+        0.005,
+        0.01,
+        0.02,
+        0.05,
+        0.1,
+        0.2,
+        0.5,
+    ]:  # 0.1, 0.5, 0.01
+        sigma = 0.1
+        # for tau in [0.0075, 0.0025]:  # 0.1, 0.01, 0.001
+        domain_config["sigma"] = sigma
+        domain_config["tau"] = sigma / 20
+        my_domain = FreezingCavity(domain_config, mesh)
+        # my_domain.set_parameters(commandline_args)
 
-    fit = solver.FirstInner(my_domain, domain_config)
-    tvs = solver.TentativeVelocityStep(my_domain, domain_config)
-    prs = solver.PressureStep(my_domain, domain_config)
-    for ci in my_domain.scalar_components:
-        scs = solver.ScalarSolver(my_domain, domain_config)
+        fit = solver.FirstInner(my_domain, domain_config)
+        tvs = solver.TentativeVelocityStep(my_domain, domain_config)
+        prs = solver.PressureStep(my_domain, domain_config)
+        for ci in my_domain.scalar_components:
+            scs = solver.ScalarSolver(my_domain, domain_config)
 
-    algorithm = FractionalStepAlgorithm(
-        my_domain, fit, tvs, prs, scs, domain_config
-    )
+        algorithm = FractionalStepAlgorithm(
+            my_domain, fit, tvs, prs, scs, domain_config
+        )
 
-    my_domain.plot()
-    algorithm.run()
+        my_domain.plot()
+        algorithm.run()
 
     # pth = pkg_dir + "results/" + my_domain.simulation_start + "/"
     # copy2(path_to_config + "config.json", pth + "config.json")
